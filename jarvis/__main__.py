@@ -110,22 +110,6 @@ def run_background() -> int:
             except Exception:
                 pass
 
-    def show_hud() -> None:
-        if hud_holder.get("hud") is not None:
-            try:
-                hud_holder["hud"].root.deiconify()
-                hud_holder["hud"].root.lift()
-            except Exception:
-                pass
-            return
-        from jarvis.ui.hud import JarvisHUD
-
-        hud = JarvisHUD()
-        hud_holder["hud"] = hud
-        # Run HUD loop in this callback only if invoked from main thread — tray uses its thread.
-        # Instead just create and withdraw until shown from main.
-        hud.root.withdraw()
-
     worker = threading.Thread(
         target=run_voice_loop,
         args=(on_status, stop_event),
