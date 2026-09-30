@@ -1,0 +1,6 @@
+speechrecognition>=3.10.0
+edge-tts>=6.1.9
+pyttsx3>=2.90
+pygame>=2.5.0
+playsound==1.2.2
+PyAudio>=0.2.14
