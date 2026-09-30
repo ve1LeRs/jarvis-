@@ -3,48 +3,54 @@ chcp 65001 >nul
 title Сборка JARVIS.exe
 cd /d "%~dp0"
 
-echo Сборка настоящего JARVIS.exe (как у обычных программ)...
-echo Нужен Windows + установленные зависимости.
+echo ========================================================
+echo   Сборка JARVIS.exe — один файл как у обычных программ
+echo ========================================================
 echo.
 
-if not exist ".venv\Scripts\activate.bat" (
-  echo Сначала запустите "Установить JARVIS.bat"
+where python >nul 2>&1
+if errorlevel 1 (
+  echo Python не найден. Установите с python.org ^(Add to PATH^).
   pause
   exit /b 1
+)
+
+if not exist ".venv\Scripts\activate.bat" (
+  echo Создаю окружение...
+  python -m venv .venv
 )
 
 call .venv\Scripts\activate.bat
-pip install -q pyinstaller
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install pyinstaller
 
-pyinstaller --noconfirm --clean ^
-  --name JARVIS ^
-  --windowed ^
-  --onefile ^
-  --hidden-import=jarvis ^
-  --hidden-import=jarvis.commands ^
-  --hidden-import=jarvis.listen ^
-  --hidden-import=jarvis.speak ^
-  --hidden-import=jarvis.autostart ^
-  --hidden-import=jarvis.actions.system ^
-  --hidden-import=jarvis.ui.hud ^
-  --hidden-import=jarvis.ui.tray ^
-  --collect-all=speech_recognition ^
-  --collect-all=edge_tts ^
-  --collect-all=pystray ^
-  jarvis\__main__.py
+echo.
+echo Собираю exe ^(это займёт несколько минут^)...
+pyinstaller --noconfirm jarvis.spec
 
 if errorlevel 1 (
-  echo Сборка не удалась.
+  echo.
+  echo Сборка не удалась. Смотрите ошибки выше.
+  pause
+  exit /b 1
+)
+
+if not exist "dist\JARVIS.exe" (
+  echo Файл dist\JARVIS.exe не найден.
   pause
   exit /b 1
 )
 
 echo.
-echo Готово: dist\JARVIS.exe
+echo ========================================================
+echo   ГОТОВО: dist\JARVIS.exe
 echo.
-echo Скопируйте JARVIS.exe куда угодно и запустите.
-echo Для автозапуска: положите exe в папку и выполните:
-echo   JARVIS.exe --install-app
+echo   1. Скопируйте JARVIS.exe куда удобно
+echo   2. Запустите один раз:  JARVIS.exe --install-app
+echo      ^(ярлык + меню Пуск + автозапуск^)
+echo   3. Дальше просто открывайте JARVIS с ярлыка
+echo ========================================================
 echo.
 explorer dist
 pause
