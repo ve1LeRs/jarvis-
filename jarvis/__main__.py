@@ -185,14 +185,37 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Create desktop shortcut and exit",
     )
+    parser.add_argument(
+        "--install-app",
+        action="store_true",
+        help="Install as Windows app: desktop, Start Menu, autostart",
+    )
+    parser.add_argument(
+        "--uninstall-app",
+        action="store_true",
+        help="Remove desktop/Start Menu/autostart shortcuts",
+    )
     args = parser.parse_args(argv)
 
-    if args.install_autostart or args.remove_autostart or args.desktop_shortcut:
+    if (
+        args.install_autostart
+        or args.remove_autostart
+        or args.desktop_shortcut
+        or args.install_app
+        or args.uninstall_app
+    ):
         from jarvis import autostart
 
+        if args.install_app:
+            print(autostart.install_as_app(with_autostart=True))
+            return 0
+        if args.uninstall_app:
+            print(autostart.uninstall_app())
+            return 0
         if args.install_autostart:
             print(autostart.enable_autostart())
             print(autostart.create_desktop_shortcut())
+            print(autostart.create_start_menu_shortcuts())
         if args.remove_autostart:
             print(autostart.disable_autostart())
         if args.desktop_shortcut and not args.install_autostart:
