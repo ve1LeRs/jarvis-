@@ -51,6 +51,12 @@ class CommandTests(unittest.TestCase):
         result = parse_and_run("помощь")
         self.assertTrue(result.ok)
 
+    @mock.patch("jarvis.autostart.enable_autostart", return_value="enabled")
+    def test_autostart_on(self, mocked) -> None:
+        result = parse_and_run("включи автозапуск")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once()
+
     def test_unknown(self) -> None:
         result = parse_and_run("блаблабла xyz")
         self.assertFalse(result.ok)

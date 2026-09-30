@@ -50,6 +50,8 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:выключи(?:\s+компьютер)?|shutdown|выключение)$"), "shutdown"),
     (re.compile(r"^(?:отмена|отмени(?:\s+выключение)?|cancel)$"), "cancel_shutdown"),
     (re.compile(r"^(?:заблокируй|блокировка|lock)$"), "lock"),
+    (re.compile(r"^(?:добавь\s+в\s+автозапуск|включи\s+автозапуск|autostart\s+on)$"), "autostart_on"),
+    (re.compile(r"^(?:убери\s+из\s+автозапуска|выключи\s+автозапуск|autostart\s+off)$"), "autostart_off"),
     # Greetings / help
     (re.compile(r"^(?:привет|здравствуй|hello|hi)$"), "hello"),
     (re.compile(r"^(?:спасибо|благодарю|thanks)$"), "thanks"),
@@ -148,6 +150,18 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
     if action == "lock":
         return _ok(act.lock_pc())
 
+    if action == "autostart_on":
+        from jarvis import autostart
+
+        msg = autostart.enable_autostart()
+        return _ok("Включил автозапуск. Буду стартовать вместе с Windows.", msg)
+
+    if action == "autostart_off":
+        from jarvis import autostart
+
+        msg = autostart.disable_autostart()
+        return _ok("Автозапуск отключён.", msg)
+
     if action == "hello":
         return _ok(random.choice(config.GREETINGS))
 
@@ -157,7 +171,8 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
     if action == "help":
         help_text = (
             "Я могу искать информацию в Chrome, открывать проводник, браузер, "
-            "YouTube, загрузки, говорить время и дату, блокировать компьютер. "
+            "YouTube, загрузки, говорить время и дату, блокировать компьютер, "
+            "включать и выключать автозапуск. "
             "Скажите, например: джарвис, найди информацию о сосновом брусе."
         )
         return _ok(help_text)

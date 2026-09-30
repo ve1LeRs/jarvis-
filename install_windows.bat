@@ -16,6 +16,11 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 
 echo.
-echo Готово. Запуск: start_jarvis.bat
-echo Текстовый режим для проверки: start_jarvis_text.bat
+echo --- Автозапуск ---
+echo Чтобы JARVIS стартовал вместе с Windows, запустите: enable_autostart.bat
+echo Будет создан ярлык на рабочем столе и запись в папке автозагрузки.
+echo.
+echo Готово. Обычный запуск: start_jarvis.bat
+echo Тихий фон (как при автозапуске): start_jarvis_silent.vbs
+echo Текстовый режим: start_jarvis_text.bat
 pause
