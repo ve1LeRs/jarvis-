@@ -15,12 +15,17 @@ import sys
 import threading
 
 from jarvis import config
+from jarvis import memory
+from jarvis import reminders
 from jarvis.commands import parse_and_run
 from jarvis import speak as speak_mod
 
 
 def speak(text: str, *, block: bool = True) -> None:
     speak_mod.speak(text, block=block)
+
+
+reminders.set_speaker(lambda text: speak(text, block=False))
 
 
 def _banner() -> None:
@@ -147,10 +152,15 @@ def run_background() -> int:
         if hud_holder.get("hud") is None:
             threading.Thread(target=_ui, daemon=True).start()
 
+    def on_mute_toggle() -> None:
+        memory.set_muted(not memory.is_muted())
+        state = "выключен" if memory.is_muted() else "включён"
+        on_status(f"Голос {state}.")
+
     try:
         from jarvis.ui.tray import run_tray
 
-        run_tray(on_show=on_show, on_quit=on_quit)
+        run_tray(on_show=on_show, on_quit=on_quit, on_mute_toggle=on_mute_toggle)
     except Exception as exc:  # noqa: BLE001
         on_status(f"Трей недоступен ({exc}). Работаю без иконки — закройте процесс вручную.")
         try:
