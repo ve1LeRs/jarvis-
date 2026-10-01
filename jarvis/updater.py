@@ -76,27 +76,84 @@ def _download(url: str, dest: Path) -> None:
     tmp.replace(dest)
 
 
+def _clean_child_env() -> dict[str, str]:
+    """Environment for launching another PyInstaller exe as an independent app.
+
+    The onefile bootloader exports _PYI_*/_MEIPASS2 and runtime hooks point TCL/TK
+    paths into our temp unpack dir; a child that inherits them reuses a folder that
+    disappears as soon as we exit.
+    """
+    meipass = getattr(sys, "_MEIPASS", "")
+    env: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key.startswith("_PYI_") or key == "_MEIPASS2":
+            continue
+        if meipass and meipass in value:
+            if key.upper() != "PATH":
+                continue
+            value = os.pathsep.join(p for p in value.split(os.pathsep) if meipass not in p)
+        env[key] = value
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
+def _old_exe_path(current: Path) -> Path:
+    old = current.with_name("JARVIS.old.exe")
+    try:
+        old.unlink(missing_ok=True)
+        return old
+    except OSError:
+        # A previous old copy is still running or locked — pick a fresh name.
+        return current.with_name(f"JARVIS.old-{os.getpid()}.exe")
+
+
+def cleanup_old_exes() -> None:
+    """Delete leftovers from previous swaps (the old exe may still be exiting)."""
+    if not _is_frozen():
+        return
+    folder = Path(sys.executable).resolve().parent
+
+    def _run() -> None:
+        for _ in range(10):
+            leftovers = [
+                *folder.glob("JARVIS.old*.exe"),
+                folder / "JARVIS.new.exe.part",
+                # Helper script of builds <= 6, which swapped files via cmd.exe.
+                Path(tempfile.gettempdir()) / "jarvis_update.cmd",
+            ]
+            remaining = False
+            for path in leftovers:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    remaining = True
+            if not remaining:
+                return
+            threading.Event().wait(3)
+
+    threading.Thread(target=_run, name="jarvis-cleanup", daemon=True).start()
+
+
 def _restart_with_new_exe(new_exe: Path) -> None:
-    """Swap the running exe via a detached batch script, then exit."""
+    """Swap exe files and start the new build, then exit.
+
+    Windows refuses to overwrite or delete a running exe but allows renaming it,
+    so no helper script has to wait for this process to die.
+    """
     current = Path(sys.executable).resolve()
-    args = subprocess.list2cmdline(sys.argv[1:])
-    script = Path(tempfile.gettempdir()) / "jarvis_update.cmd"
-    # The running exe is locked by Windows until this process exits, hence the retry loop.
-    script.write_text(
-        "@echo off\r\n"
-        "chcp 65001 >nul\r\n"
-        ":wait\r\n"
-        f'tasklist /FI "PID eq {os.getpid()}" | find "{os.getpid()}" >nul && '
-        "(timeout /t 1 /nobreak >nul & goto wait)\r\n"
-        ":swap\r\n"
-        f'move /Y "{new_exe}" "{current}" >nul || (timeout /t 1 /nobreak >nul & goto swap)\r\n'
-        f'start "" "{current}" {args}\r\n'
-        'del "%~f0"\r\n',
-        encoding="utf-8",
-    )
+    old = _old_exe_path(current)
+    current.rename(old)
+    try:
+        new_exe.rename(current)
+    except OSError:
+        old.rename(current)
+        raise
     subprocess.Popen(
-        ["cmd.exe", "/c", str(script)],
-        creationflags=_NO_WINDOW | getattr(subprocess, "DETACHED_PROCESS", 0),
+        [str(current), *sys.argv[1:]],
+        cwd=str(current.parent),
+        env=_clean_child_env(),
+        creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
         close_fds=True,
     )
     os._exit(0)
@@ -309,6 +366,7 @@ def check_and_update(on_status: Callable[[str], None] = print) -> bool:
 
 def start_background_updates(on_status: Callable[[str], None] = print) -> None:
     """Check now and then every CHECK_INTERVAL_SECONDS in a daemon thread."""
+    cleanup_old_exes()
     if updates_disabled():
         return
 

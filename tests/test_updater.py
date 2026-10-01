@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -60,6 +61,56 @@ class ReleaseUpdaterTests(unittest.TestCase):
     def test_disabled_by_env(self) -> None:
         with mock.patch.dict(os.environ, {"JARVIS_NO_UPDATE": "1"}):
             self.assertFalse(updater.check_and_update(lambda _m: None))
+
+    def test_swap_renames_running_exe_and_starts_new_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            current = folder / "JARVIS.exe"
+            new = folder / "JARVIS.new.exe"
+            current.write_bytes(b"old build")
+            new.write_bytes(b"new build")
+            with mock.patch.object(updater.sys, "executable", str(current)), mock.patch.object(
+                updater.sys, "argv", ["JARVIS.exe", "--background"]
+            ), mock.patch.object(updater.subprocess, "Popen") as popen, mock.patch.object(
+                updater.os, "_exit", side_effect=SystemExit
+            ):
+                with self.assertRaises(SystemExit):
+                    updater._restart_with_new_exe(new)
+            self.assertEqual(current.read_bytes(), b"new build")
+            self.assertEqual((folder / "JARVIS.old.exe").read_bytes(), b"old build")
+            self.assertFalse(new.exists())
+            self.assertEqual(popen.call_args.args[0], [str(current.resolve()), "--background"])
+
+    def test_swap_rolls_back_when_new_exe_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            current = Path(tmp) / "JARVIS.exe"
+            current.write_bytes(b"old build")
+            with mock.patch.object(updater.sys, "executable", str(current)), mock.patch.object(
+                updater.subprocess, "Popen"
+            ) as popen:
+                with self.assertRaises(OSError):
+                    updater._restart_with_new_exe(Path(tmp) / "missing.exe")
+            self.assertEqual(current.read_bytes(), b"old build")
+            popen.assert_not_called()
+
+    def test_child_env_drops_pyinstaller_state(self) -> None:
+        meipass = r"C:\Temp\_MEI12345"
+        env = {
+            "_PYI_APPLICATION_HOME_DIR": meipass,
+            "_MEIPASS2": meipass,
+            "TCL_LIBRARY": meipass + r"\tcl",
+            "PATH": meipass + r";C:\Windows",
+            "USERPROFILE": r"C:\Users\me",
+        }
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+            updater.sys, "_MEIPASS", meipass, create=True
+        ):
+            child = updater._clean_child_env()
+        self.assertEqual(child["PATH"], r"C:\Windows")
+        self.assertEqual(child["USERPROFILE"], r"C:\Users\me")
+        self.assertEqual(child["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+        for key in ("_PYI_APPLICATION_HOME_DIR", "_MEIPASS2", "TCL_LIBRARY"):
+            self.assertNotIn(key, child)
 
     def test_version_label(self) -> None:
         with mock.patch.object(updater, "BUILD", 7):
