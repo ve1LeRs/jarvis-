@@ -15,6 +15,7 @@ from jarvis.actions import cursor_app
 from jarvis.actions import discord_app
 from jarvis.actions import fun as fun_act
 from jarvis.actions import games
+from jarvis.actions import knowledge
 from jarvis.actions import spotify as spotify_act
 from jarvis.actions import system as act
 from jarvis.actions import word_app
@@ -43,9 +44,22 @@ def _fail(spoken: str | None = None) -> Result:
 _RULES: list[tuple[re.Pattern[str], str]] = [
     # YouTube search before generic search
     (re.compile(r"^(?:найди|поищи|поиск)\s+(?:на\s+)?(?:ютуб[еу]?|youtube)\s+(.+)$"), "youtube_search"),
-    # Search
+    # Spoken web answers / questions (before generic search)
+    (
+        re.compile(
+            r"^(?:как|почему|зачем|чем|когда|где|откуда|what|how|why|when|where)\b(.+)$"
+        ),
+        "answer",
+    ),
+    (
+        re.compile(
+            r"^(?:расскажи(?:\s+мне)?(?:\s+про|\s+о(?:б)?)?|объясни(?:\s+мне)?(?:\s+про|\s+о(?:б)?)?)\s+(.+)$"
+        ),
+        "answer",
+    ),
+    (re.compile(r"^(?:что\s+такое|кто\s+такой|кто\s+такая|что\s+знач(?:ит)?)\s+(.+)$"), "answer"),
+    # Search — also answers aloud + opens browser
     (re.compile(r"^(?:найди|найти|поищи|поиск|загугли|google)\s+(?:информацию\s+о(?:б)?\s+|про\s+|о(?:б)?\s+)?(.+)$"), "search"),
-    (re.compile(r"^(?:что\s+такое|кто\s+такой|кто\s+такая)\s+(.+)$"), "search"),
     (re.compile(r"^(?:search|look\s+up|find(?:\s+info(?:rmation)?)?(?:\s+about)?)\s+(.+)$"), "search"),
     (re.compile(r"^(?:погода)(?:\s+(?:в|во|для)\s+(.+))?$"), "weather"),
     # Notes / reminders / memory
@@ -243,15 +257,18 @@ def parse_and_run(command: str) -> Result:
             memory.remember_command(original or text)
         return result
 
-    # Soft fallback: if it looks like a search intent, search it.
-    if any(w in text for w in ("найди", "поиск", "информац", "что такое")):
+    # Soft fallback: questions / search-like phrases.
+    if knowledge.is_question(text) or any(
+        w in text for w in ("найди", "поиск", "информац", "что такое", "расскажи", "объясни")
+    ):
         cleaned = re.sub(
             r"^(?:джарвис|jarvis)?\s*(?:найди|поищи|поиск)?\s*(?:информацию\s+о(?:б)?)?\s*",
             "",
             text,
         ).strip()
         if cleaned:
-            result = _dispatch("search", cleaned, text)
+            action = "answer" if knowledge.is_question(text) else "search"
+            result = _dispatch(action, cleaned, text)
             if result.ok:
                 memory.remember_command(original or text)
             return result
@@ -260,9 +277,17 @@ def parse_and_run(command: str) -> Result:
 
 
 def _dispatch(action: str, payload: str, raw: str) -> Result:
+    if action == "answer":
+        query = (payload or raw or "").strip()
+        # Patterns capture the tail after "как" without the leading word — restore it.
+        if re.match(r"^(как|почему|зачем|чем|когда|где|откуда|what|how|why|when|where)\b", raw):
+            query = raw
+        found = knowledge.lookup(query, open_browser=True)
+        return _ok(found.spoken, found.source or found.url)
+
     if action == "search":
-        msg = act.search_web(payload)
-        return _ok(f"{random.choice(config.ACKNOWLEDGMENTS)} Ищу информацию о {payload}.", msg)
+        found = knowledge.lookup(payload, open_browser=True)
+        return _ok(found.spoken, found.source or found.url)
 
     if action == "youtube_search":
         return _ok(f"Ищу на YouTube: {payload}.", act.search_youtube(payload))
@@ -563,10 +588,10 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
     if action == "help":
         help_text = (
             "Заточен под ваш стек: Discord, Chrome, Spotify, CS2, PUBG, Cursor и Word. "
-            "Примеры: рабочий режим; игровой режим кс; го в пабг; "
+            "Примеры: как переключить раскладку; рабочий режим; го в пабг; "
             "открой курсор; новый документ; мют дискорд; "
-            "включи трек в спотифай; новая вкладка; инкогнито. "
-            "Также заметки, напоминания, скриншоты и поиск."
+            "включи трек в спотифай; новая вкладка. "
+            "На вопросы ищу ответ в интернете и озвучиваю кратко."
         )
         return _ok(help_text)
 

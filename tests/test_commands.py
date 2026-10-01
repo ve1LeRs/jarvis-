@@ -43,11 +43,18 @@ class CommandTests(unittest.TestCase):
             patcher.stop()
         self._tmp.cleanup()
 
-    @mock.patch("jarvis.actions.system.search_web", return_value="ok")
+    @mock.patch(
+        "jarvis.actions.knowledge.lookup",
+        return_value=__import__(
+            "jarvis.actions.knowledge", fromlist=["Answer"]
+        ).Answer(spoken="Кратко: сосновый брус — пиломатериал.", source="поиск"),
+    )
     def test_search_pine_beam(self, mocked) -> None:
         result = parse_and_run("найди информацию о сосновом брусе")
         self.assertTrue(result.ok)
-        mocked.assert_called_once_with("сосновом брусе")
+        self.assertIn("брус", result.spoken.lower())
+        mocked.assert_called_once()
+        self.assertEqual(mocked.call_args.args[0], "сосновом брусе")
 
     @mock.patch("jarvis.actions.system.open_explorer", return_value="explorer")
     def test_explorer(self, mocked) -> None:
@@ -80,7 +87,7 @@ class CommandTests(unittest.TestCase):
     def test_help(self) -> None:
         result = parse_and_run("помощь")
         self.assertTrue(result.ok)
-        self.assertIn("напоминан", result.spoken.lower())
+        self.assertIn("раскладк", result.spoken.lower())
 
     @mock.patch("jarvis.autostart.enable_autostart", return_value="enabled")
     def test_autostart_on(self, mocked) -> None:
