@@ -7,11 +7,8 @@ echo ========================================================
 echo   J.A.R.V.I.S. — установка как программы на Windows
 echo ========================================================
 echo.
-echo  Сейчас будет сделано всё за один раз:
-echo   1. Установка зависимостей
-echo   2. Ярлык на рабочем столе
-echo   3. Пункт в меню Пуск
-echo   4. Автозапуск при включении компьютера
+echo  Один раз ставите зависимости и ярлыки.
+echo  Потом обновления: update.bat ^(без перекачки zip^).
 echo.
 
 where python >nul 2>&1
@@ -27,15 +24,19 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [1/3] Создаю окружение и ставлю библиотеки...
-python -m venv .venv
-if errorlevel 1 (
-  echo Не удалось создать .venv
-  pause
-  exit /b 1
+echo [1/3] Окружение и библиотеки...
+if exist ".venv\Scripts\activate.bat" (
+  echo .venv уже есть — не создаю заново.
+) else (
+  python -m venv .venv
+  if errorlevel 1 (
+    echo Не удалось создать .venv
+    pause
+    exit /b 1
+  )
 )
 call .venv\Scripts\activate.bat
-python -m pip install --upgrade pip
+python -m pip install -q --upgrade pip
 pip install -r requirements.txt
 if errorlevel 1 (
   echo.
@@ -60,13 +61,12 @@ echo.
 echo ========================================================
 echo   JARVIS установлен.
 echo.
-echo   - Ярлык на рабочем столе: JARVIS
-echo   - Меню Пуск → J.A.R.V.I.S.
-echo   - После перезагрузки стартует сам
-echo.
-echo   Скажите: «Джарвис, открой проводник»
-echo.
-echo   Удаление: uninstall.bat
+echo   Обновления кода ^(если клонировали через git^):
+echo     update.bat
+echo   Быстрый тест без микрофона:
+echo     dev.bat
+echo   Голос:
+echo     start_jarvis.bat
 echo ========================================================
 echo.
 echo Запустить JARVIS сейчас?

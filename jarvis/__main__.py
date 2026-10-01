@@ -262,7 +262,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Remove desktop/Start Menu/autostart shortcuts",
     )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="git pull latest code + refresh pip deps, then exit",
+    )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Shortcut: text mode without UI/TTS (same as --text --no-ui --no-speak)",
+    )
     args = parser.parse_args(argv)
+
+    if args.update:
+        from jarvis import updater
+
+        print(updater.update_from_git())
+        return 0
+
+    if args.dev:
+        args.text = True
+        args.no_ui = True
+        args.no_speak = True
 
     if (
         args.install_autostart

@@ -30,6 +30,7 @@ from jarvis import llm
 from jarvis import paths
 from jarvis import plugins
 from jarvis import proactive
+from jarvis import updater
 
 
 @dataclass
@@ -377,6 +378,14 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:очисти\s+корзину|пустая\s+корзина|empty\s+recycle)$"), "recycle"),
     (re.compile(r"^(?:добавь\s+в\s+автозапуск|включи\s+автозапуск|autostart\s+on)$"), "autostart_on"),
     (re.compile(r"^(?:убери\s+из\s+автозапуска|выключи\s+автозапуск|autostart\s+off)$"), "autostart_off"),
+    # Self-update (git pull) — no zip re-download
+    (
+        re.compile(
+            r"^(?:обнови(?:сь|ться)?(?:\s+джарвис)?|обнови\s+код|update(?:\s+jarvis)?|git\s+pull)$"
+        ),
+        "self_update",
+    ),
+    (re.compile(r"^(?:версия|какой\s+коммит|git\s+status|update\s+status)$"), "update_status"),
     # Greetings / help
     (re.compile(r"^(?:привет|здравствуй|hello|hi)$"), "hello"),
     (re.compile(r"^(?:спасибо|благодарю|thanks)$"), "thanks"),
@@ -1019,6 +1028,12 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
         msg = autostart.disable_autostart()
         return _ok("Автозапуск отключён.", msg)
 
+    if action == "self_update":
+        return _ok(updater.update_from_git())
+
+    if action == "update_status":
+        return _ok(updater.status_text())
+
     if action == "hello":
         return _ok(random.choice(config.GREETINGS))
 
@@ -1031,7 +1046,8 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
             "Режимы: утренний, вечерний, рабочий, матч, с друзьями. "
             "Календарь ICS, дела, напоминания, макросы, OCR/vision «опиши экран», "
             "Spotify OAuth, войс Discord, плагины, Ollama, мост Telegram/WhatsApp, "
-            "push-to-talk Ctrl+Alt+J. Опасные команды — только после «подтверди»."
+            "push-to-talk Ctrl+Alt+J, «обнови джарвис» без перекачки. "
+            "Опасные команды — только после «подтверди»."
         )
         return _ok(help_text)
 
