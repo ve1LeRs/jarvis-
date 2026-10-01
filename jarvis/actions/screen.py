@@ -25,12 +25,23 @@ def read_selection() -> str:
     return text
 
 
-def whats_on_screen() -> str:
-    """Take a screenshot and try OCR; fall back to a helpful message."""
+def whats_on_screen(*, prefer_vision: bool = True, question: str | None = None) -> str:
+    """Screenshot → vision LLM (if available) → OCR fallback."""
     shot_msg = sys_act.take_screenshot()
     image_path = _latest_screenshot()
     if not image_path:
         return shot_msg + " Не нашёл файл скриншота для распознавания."
+
+    if prefer_vision:
+        try:
+            from jarvis import llm
+
+            vision = llm.describe_image(image_path, question)
+            if vision:
+                preview = vision if len(vision) <= 500 else vision[:497] + "..."
+                return f"На экране: {preview}"
+        except Exception:
+            pass
 
     ocr_text = _ocr_image(image_path)
     if ocr_text:
@@ -38,9 +49,45 @@ def whats_on_screen() -> str:
         return f"На экране вижу текст: {preview}"
     return (
         f"{shot_msg} "
-        "Распознавание текста недоступно (нужен tesseract). "
-        "Могу прочитать выделение из буфера: скажите «прочитай выделение»."
+        "Ни vision-модель, ни OCR недоступны. "
+        "Поставьте Ollama+llava или tesseract. "
+        "Могу прочитать выделение: «прочитай выделение»."
     )
+
+
+def describe_screen(question: str | None = None) -> str:
+    """Force vision description (falls back to OCR via whats_on_screen)."""
+    return whats_on_screen(prefer_vision=True, question=question or None)
+
+
+def find_on_screen(query: str) -> str:
+    """Locate a UI element via vision, then try OCR click coordinates."""
+    needle = (query or "").strip()
+    if not needle:
+        return "Что искать на экране?"
+    shot_msg = sys_act.take_screenshot()
+    image_path = _latest_screenshot()
+    if not image_path:
+        return shot_msg + " Нет скриншота."
+
+    vision_note = ""
+    try:
+        from jarvis import llm
+
+        vision_note = llm.find_on_image(image_path, needle) or ""
+    except Exception:
+        vision_note = ""
+
+    # Still offer OCR click if the label is readable
+    boxes = _ocr_boxes(image_path)
+    needle_l = needle.lower()
+    hit = next((b for b in boxes if needle_l in b["text"].lower()), None)
+    if hit and _click_at(int(hit["x"]), int(hit["y"])):
+        prefix = (vision_note + " ") if vision_note else ""
+        return f"{prefix}Нашёл и нажимаю «{hit['text']}»."
+    if vision_note:
+        return vision_note
+    return f"Не нашёл «{needle}» ни vision-моделью, ни OCR."
 
 
 def _pictures_dir() -> Path:
@@ -162,7 +209,7 @@ def _click_at(x: int, y: int) -> bool:
 
 
 def click_text(query: str) -> str:
-    """Screenshot → OCR → click the word/phrase matching query."""
+    """Screenshot → OCR → click; vision helps describe if OCR misses."""
     needle = (query or "").strip()
     if not needle:
         return "Скажите, что нажать. Например: нажми кнопку Сохранить."
@@ -173,7 +220,15 @@ def click_text(query: str) -> str:
 
     boxes = _ocr_boxes(image_path)
     if not boxes:
-        # Fallback: at least OCR text
+        # Vision fallback guidance, then OCR plain text
+        try:
+            from jarvis import llm
+
+            vision = llm.find_on_image(image_path, needle)
+            if vision:
+                return vision + " Координаты для клика недоступны без tesseract."
+        except Exception:
+            pass
         text = _ocr_image(image_path)
         if text and needle.lower() in text.lower():
             return (

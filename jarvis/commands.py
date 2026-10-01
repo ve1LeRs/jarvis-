@@ -25,6 +25,7 @@ from jarvis.actions import spotify as spotify_act
 from jarvis.actions import system as act
 from jarvis.actions import word_app
 from jarvis.actions import workflows
+from jarvis import bridge
 from jarvis import llm
 from jarvis import paths
 from jarvis import plugins
@@ -62,9 +63,15 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:удали\s+макрос)\s+(.+)$"), "macro_del"),
     # YouTube search before generic search
     (re.compile(r"^(?:найди|поищи|поиск)\s+(?:на\s+)?(?:ютуб[еу]?|youtube)\s+(.+)$"), "youtube_search"),
-    # App path detection before generic «найди …»
+    # App path detection / on-screen find before generic «найди …»
     (re.compile(r"^(?:найди\s+программы|профиль\s+пк|detect\s+apps|автопоиск\s+программ)$"), "paths_detect"),
     (re.compile(r"^(?:где\s+программы|пути\s+программ|app\s+paths)$"), "paths_status"),
+    (
+        re.compile(
+            r"^(?:найди\s+на\s+экране|где\s+на\s+экране|find\s+on\s+screen)\s+(.+)$"
+        ),
+        "find_on_screen",
+    ),
     # Spoken web answers / questions (before generic search)
     (
         re.compile(
@@ -126,6 +133,12 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     # Screen / selection / OCR click
     (re.compile(r"^(?:прочитай\s+выделение|что\s+в\s+выделении|read\s+selection)$"), "read_selection"),
     (re.compile(r"^(?:что\s+на\s+экране|прочитай\s+экран|whats?\s+on\s+screen)$"), "read_screen"),
+    (
+        re.compile(
+            r"^(?:опиши\s+экран|что\s+ты\s+видишь|vision|осмотри\s+экран)(?:\s+(.+))?$"
+        ),
+        "describe_screen",
+    ),
     (
         re.compile(
             r"^(?:нажми|кликни|click)\s+(?:на\s+)?(?:кнопку\s+|текст\s+)?(.+)$"
@@ -263,6 +276,51 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:статус\s+модели|llm\s+status|олл[аа]ма)$"), "llm_status"),
     (re.compile(r"^(?:спроси\s+модель|локальная\s+модель)\s+(.+)$"), "llm_ask"),
     (re.compile(r"^(?:push\s+to\s+talk|ptt|горячая\s+клавиша)$"), "ptt_help"),
+    # Phone bridge (Telegram / WhatsApp HTTP)
+    (
+        re.compile(
+            r"^(?:сохрани\s+телеграм\s+токен|telegram\s+token)\s+(.+)$"
+        ),
+        "bridge_tg_token",
+    ),
+    (
+        re.compile(
+            r"^(?:разреши\s+телеграм\s+чат|allow\s+telegram\s+chat)\s+(.+)$"
+        ),
+        "bridge_tg_allow",
+    ),
+    (
+        re.compile(
+            r"^(?:включи\s+телеграм\s+мост|telegram\s+bridge\s+on|старт\s+телеграм\s+мост)$"
+        ),
+        "bridge_tg_on",
+    ),
+    (
+        re.compile(
+            r"^(?:выключи\s+телеграм\s+мост|telegram\s+bridge\s+off)$"
+        ),
+        "bridge_tg_off",
+    ),
+    (
+        re.compile(
+            r"^(?:включи\s+мост|мост\s+вкл|bridge\s+on|включи\s+телефонный\s+мост)$"
+        ),
+        "bridge_on",
+    ),
+    (
+        re.compile(
+            r"^(?:выключи\s+мост|мост\s+выкл|bridge\s+off)$"
+        ),
+        "bridge_off",
+    ),
+    (re.compile(r"^(?:статус\s+моста|мост|bridge\s+status)$"), "bridge_status"),
+    (re.compile(r"^(?:секрет\s+моста|bridge\s+secret)\s+(.+)$"), "bridge_secret"),
+    (
+        re.compile(
+            r"^(?:сохрани\s+ватсап|whatsapp\s+cloud)\s+(.+)$"
+        ),
+        "bridge_wa",
+    ),
     # Chrome extras
     (re.compile(r"^(?:новая\s+вкладка|new\s+tab)(?:\s+(.+))?$"), "chrome_new_tab"),
     (re.compile(r"^(?:закрой\s+вкладку|close\s+tab)$"), "chrome_close_tab"),
@@ -373,7 +431,22 @@ def parse_and_run(command: str, *, _depth: int = 0) -> Result:
             )
             if raw_match:
                 payload = raw_match.group(1).strip()
-        dispatch_raw = payload if action in {"remind", "macro_add", "cal_add"} else text
+        # Tokens/secrets often contain ':' — keep original tail.
+        if action in {"bridge_tg_token", "bridge_secret", "bridge_wa", "spotify_keys"}:
+            patterns = {
+                "bridge_tg_token": r"(?:сохрани\s+телеграм\s+токен|telegram\s+token)\s+(.+)$",
+                "bridge_secret": r"(?:секрет\s+моста|bridge\s+secret)\s+(.+)$",
+                "bridge_wa": r"(?:сохрани\s+ватсап|whatsapp\s+cloud)\s+(.+)$",
+                "spotify_keys": r"(?:сохрани\s+спотифай\s+ключи|spotify\s+keys)\s+(.+)$",
+            }
+            raw_match = re.search(patterns[action], original, flags=re.IGNORECASE)
+            if raw_match:
+                payload = raw_match.group(1).strip()
+        dispatch_raw = (
+            payload
+            if action in {"remind", "macro_add", "cal_add", "bridge_tg_token", "bridge_secret", "bridge_wa", "spotify_keys"}
+            else text
+        )
         result = _dispatch(action, payload, dispatch_raw)
         if result.ok and action not in {
             "repeat",
@@ -522,6 +595,12 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
 
     if action == "read_screen":
         return _ok(screen.whats_on_screen())
+
+    if action == "describe_screen":
+        return _ok(screen.describe_screen(payload or None))
+
+    if action == "find_on_screen":
+        return _ok(screen.find_on_screen(payload))
 
     if action == "click_text":
         return _ok(screen.click_text(payload))
@@ -719,6 +798,44 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
 
         return _ok(hotkeys.describe_default())
 
+    if action == "bridge_tg_token":
+        return _ok(bridge.save_telegram_token(payload))
+
+    if action == "bridge_tg_allow":
+        return _ok(bridge.allow_telegram_chat(payload))
+
+    if action == "bridge_tg_on":
+        return _ok(bridge.start_telegram())
+
+    if action == "bridge_tg_off":
+        return _ok(bridge.stop_telegram())
+
+    if action == "bridge_on":
+        return _ok(bridge.start_all())
+
+    if action == "bridge_off":
+        return _ok(bridge.stop_all())
+
+    if action == "bridge_status":
+        return _ok(bridge.status_text())
+
+    if action == "bridge_secret":
+        return _ok(bridge.save_http_secret(payload))
+
+    if action == "bridge_wa":
+        parts = (payload or "").split()
+        if len(parts) >= 2:
+            verify = parts[2] if len(parts) >= 3 else "jarvis"
+            return _ok(bridge.save_whatsapp_cloud(parts[0], parts[1], verify_token=verify))
+        m = re.search(r"(\S+)\s+(\S+)(?:\s+(\S+))?$", raw or "")
+        if m:
+            return _ok(
+                bridge.save_whatsapp_cloud(
+                    m.group(1), m.group(2), verify_token=m.group(3) or "jarvis"
+                )
+            )
+        return _fail("Скажите: сохрани ватсап TOKEN PHONE_NUMBER_ID [verify_token]")
+
     if action == "chrome_new_tab":
         return _ok(chrome_app.new_tab(payload or None))
 
@@ -912,8 +1029,8 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
         help_text = (
             "Стек: Discord, Chrome, Spotify, CS2, PUBG, Cursor, Word. "
             "Режимы: утренний, вечерний, рабочий, матч, с друзьями. "
-            "Календарь ICS, дела, напоминания, макросы, OCR и «нажми кнопку», "
-            "Spotify OAuth, войс Discord, плагины, локальная модель Ollama, "
+            "Календарь ICS, дела, напоминания, макросы, OCR/vision «опиши экран», "
+            "Spotify OAuth, войс Discord, плагины, Ollama, мост Telegram/WhatsApp, "
             "push-to-talk Ctrl+Alt+J. Опасные команды — только после «подтверди»."
         )
         return _ok(help_text)

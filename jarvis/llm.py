@@ -1,18 +1,21 @@
-"""Optional local LLM (Ollama) for free-form intent routing and follow-ups."""
+"""Optional local LLM (Ollama) for free-form intent, follow-ups, and vision."""
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from jarvis import memory
 
 FOLLOWUP_KEY = "llm_followup"
 DEFAULT_MODEL = os.getenv("JARVIS_OLLAMA_MODEL", "llama3.2")
+VISION_MODEL = os.getenv("JARVIS_VISION_MODEL", "llava")
 OLLAMA_URL = os.getenv("JARVIS_OLLAMA_URL", "http://127.0.0.1:11434")
 
 
@@ -25,16 +28,69 @@ def available() -> bool:
         return False
 
 
-def _chat(prompt: str, *, system: str = "", timeout: float = 20.0) -> str | None:
+def list_models() -> list[str]:
+    try:
+        req = urllib.request.Request(f"{OLLAMA_URL.rstrip('/')}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            payload = json.loads(resp.read().decode())
+    except Exception:
+        return []
+    names = []
+    for item in payload.get("models") or []:
+        name = str(item.get("name") or "")
+        if name:
+            names.append(name)
+    return names
+
+
+def vision_available() -> bool:
+    if not available():
+        return False
+    names = [n.lower() for n in list_models()]
+    target = VISION_MODEL.lower()
+    if any(target == n or n.startswith(target + ":") or target in n for n in names):
+        return True
+    # Common vision model families already pulled
+    return any(
+        any(key in n for key in ("llava", "moondream", "vision", "minicpm-v", "bakllava"))
+        for n in names
+    )
+
+
+def _resolve_vision_model() -> str:
+    names = list_models()
+    lower_map = {n.lower(): n for n in names}
+    target = VISION_MODEL.lower()
+    for n_lower, n in lower_map.items():
+        if n_lower == target or n_lower.startswith(target + ":"):
+            return n
+    for key in ("llava", "moondream", "llama3.2-vision", "minicpm-v", "bakllava"):
+        for n_lower, n in lower_map.items():
+            if key in n_lower:
+                return n
+    return VISION_MODEL
+
+
+def _chat(
+    prompt: str,
+    *,
+    system: str = "",
+    timeout: float = 20.0,
+    model: str | None = None,
+    images_b64: list[str] | None = None,
+) -> str | None:
     body: dict[str, Any] = {
-        "model": DEFAULT_MODEL,
+        "model": model or DEFAULT_MODEL,
         "stream": False,
         "messages": [],
         "options": {"temperature": 0.2},
     }
     if system:
         body["messages"].append({"role": "system", "content": system})
-    body["messages"].append({"role": "user", "content": prompt})
+    user_msg: dict[str, Any] = {"role": "user", "content": prompt}
+    if images_b64:
+        user_msg["images"] = images_b64
+    body["messages"].append(user_msg)
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         f"{OLLAMA_URL.rstrip('/')}/api/chat",
@@ -50,6 +106,72 @@ def _chat(prompt: str, *, system: str = "", timeout: float = 20.0) -> str | None
     message = payload.get("message") or {}
     content = message.get("content")
     return str(content).strip() if content else None
+
+
+def _image_to_b64(path: Path, *, max_side: int = 1280) -> str | None:
+    """Encode image as JPEG base64, optionally downscaling via Pillow."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(path)
+        img = img.convert("RGB")
+        w, h = img.size
+        scale = min(1.0, max_side / max(w, h))
+        if scale < 1.0:
+            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        return base64.b64encode(raw).decode("ascii")
+
+
+def describe_image(path: str | Path, question: str | None = None) -> str | None:
+    """Ask a vision model what is on the image / answer a question about it."""
+    path = Path(path)
+    if not path.exists() or not vision_available():
+        return None
+    b64 = _image_to_b64(path)
+    if not b64:
+        return None
+    prompt = (question or "").strip() or (
+        "Опиши экран кратко по-русски: какое приложение открыто, "
+        "главные элементы интерфейса и что сейчас важно пользователю. "
+        "1–4 предложения, без markdown."
+    )
+    system = (
+        "Ты зрительный модуль JARVIS. Отвечай по-русски, кратко и по делу. "
+        "Если видишь кнопки/меню — назови их. Не выдумывай невидимое."
+    )
+    out = _chat(
+        prompt,
+        system=system,
+        timeout=45.0,
+        model=_resolve_vision_model(),
+        images_b64=[b64],
+    )
+    if out:
+        memory.update_settings(**{FOLLOWUP_KEY: out[:400]})
+    return out
+
+
+def find_on_image(path: str | Path, target: str) -> str | None:
+    """Ask vision where a UI element is and whether it looks clickable."""
+    target = (target or "").strip()
+    if not target:
+        return None
+    question = (
+        f"Найди на скриншоте элемент «{target}». "
+        "Скажи, виден ли он, в какой части экрана (лево/центр/право, верх/низ) "
+        "и как он подписан. Если не виден — скажи прямо. Кратко по-русски."
+    )
+    return describe_image(path, question)
 
 
 _SYSTEM_ROUTE = (
@@ -102,12 +224,13 @@ def clear_followup() -> None:
 
 
 def status_text() -> str:
-    if available():
-        return f"Локальная модель Ollama доступна ({DEFAULT_MODEL})."
-    return (
-        "Локальная LLM недоступна. Установите Ollama и модель "
-        f"({DEFAULT_MODEL}), либо задайте JARVIS_OLLAMA_URL."
-    )
+    if not available():
+        return (
+            "Локальная LLM недоступна. Установите Ollama и модель "
+            f"({DEFAULT_MODEL}), либо задайте JARVIS_OLLAMA_URL."
+        )
+    vision = f"vision={_resolve_vision_model()}" if vision_available() else "vision нет (ollama pull llava)"
+    return f"Ollama доступна ({DEFAULT_MODEL}; {vision})."
 
 
 def looks_like_followup(text: str) -> bool:

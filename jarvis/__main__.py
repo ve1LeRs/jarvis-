@@ -15,6 +15,7 @@ import random
 import sys
 import threading
 
+from jarvis import bridge
 from jarvis import config
 from jarvis import context
 from jarvis import hotkeys
@@ -32,6 +33,17 @@ def speak(text: str, *, block: bool = True) -> None:
 
 reminders.set_speaker(lambda text: speak(text, block=False))
 proactive.set_speaker(lambda text: speak(text, block=False))
+
+
+def _bridge_handle(command: str) -> str:
+    result = parse_and_run(command)
+    # Optionally speak replies that arrived from the phone
+    if result.spoken:
+        speak(result.spoken, block=False)
+    return result.spoken
+
+
+bridge.set_command_handler(_bridge_handle)
 
 
 def _banner() -> None:
@@ -293,6 +305,10 @@ def main(argv: list[str] | None = None) -> int:
         pass
     try:
         proactive.start()
+    except Exception:
+        pass
+    try:
+        bridge.autostart_if_configured()
     except Exception:
         pass
 
