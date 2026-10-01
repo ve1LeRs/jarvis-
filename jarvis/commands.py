@@ -10,9 +10,15 @@ from typing import Callable
 from jarvis import config
 from jarvis import memory
 from jarvis import reminders
+from jarvis.actions import chrome_app
+from jarvis.actions import cursor_app
+from jarvis.actions import discord_app
 from jarvis.actions import fun as fun_act
+from jarvis.actions import games
 from jarvis.actions import spotify as spotify_act
 from jarvis.actions import system as act
+from jarvis.actions import word_app
+from jarvis.actions import workflows
 
 
 @dataclass
@@ -113,6 +119,55 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
         ),
         "spotify_liked",
     ),
+    # Workflows / modes
+    (re.compile(r"^(?:рабочий\s+режим|режим\s+работы|work\s+mode)$"), "mode_work"),
+    (re.compile(r"^(?:режим\s+кода|coding\s+mode)$"), "mode_code"),
+    (re.compile(r"^(?:чилл(?:\s+режим)?|режим\s+чилл|chill\s+mode)$"), "mode_chill"),
+    (
+        re.compile(
+            r"^(?:игровой\s+режим|го\s+в|режим\s+игры|game\s+mode)\s+"
+            r"(.+)$"
+        ),
+        "mode_game",
+    ),
+    (re.compile(r"^(?:го\s+в\s+кс(?:\s*2)?|погнали\s+в\s+кс(?:\s*2)?)$"), "launch_cs2"),
+    (re.compile(r"^(?:го\s+в\s+пабг|погнали\s+в\s+пабг)$"), "launch_pubg"),
+    (re.compile(r"^(?:мой\s+стек|мои\s+программы|любимые\s+программы)$"), "stack"),
+    # Discord
+    (re.compile(r"^(?:открой|открыть|запусти)\s+(?:дискорд|discord)$"), "discord_open"),
+    (re.compile(r"^(?:мют|мут|замьють|размьють|mute)\s*(?:дискорд|discord)?$"), "discord_mute"),
+    (re.compile(r"^(?:деф|дефнуть|undeafen|deafen)\s*(?:дискорд|discord)?$"), "discord_deafen"),
+    (re.compile(r"^(?:дискорд|discord)\s+(?:инвайт|invite)\s+(.+)$"), "discord_invite"),
+    # Chrome extras
+    (re.compile(r"^(?:новая\s+вкладка|new\s+tab)(?:\s+(.+))?$"), "chrome_new_tab"),
+    (re.compile(r"^(?:закрой\s+вкладку|close\s+tab)$"), "chrome_close_tab"),
+    (re.compile(r"^(?:верни\s+вкладку|reopen\s+tab)$"), "chrome_reopen_tab"),
+    (re.compile(r"^(?:обнови\s+страницу|refresh)$"), "chrome_refresh"),
+    (re.compile(r"^(?:инкогнито|открой\s+инкогнито)(?:\s+(.+))?$"), "chrome_incognito"),
+    (re.compile(r"^(?:открой\s+в\s+хроме|open\s+in\s+chrome)\s+(.+)$"), "chrome_site"),
+    # Games
+    (
+        re.compile(
+            r"^(?:запусти|открой|открыть|play)\s+"
+            r"(?:кс(?:\s*2)?|cs(?:\s*2)?|counter-strike(?:\s*2)?|контра)$"
+        ),
+        "launch_cs2",
+    ),
+    (
+        re.compile(
+            r"^(?:запусти|открой|открыть|play)\s+"
+            r"(?:пабг|pubg|пабджи|пубг|battlegrounds)$"
+        ),
+        "launch_pubg",
+    ),
+    # Cursor
+    (re.compile(r"^(?:открой|открыть|запусти)\s+(?:курсор|cursor)(?:\s+(.+))?$"), "cursor_open"),
+    (re.compile(r"^(?:новое\s+окно\s+курсора|cursor\s+new\s+window)$"), "cursor_new"),
+    (re.compile(r"^(?:открой\s+джарвис(?:а)?\s+в\s+курсоре)$"), "cursor_jarvis"),
+    # Word
+    (re.compile(r"^(?:открой|открыть|запусти)\s+(?:ворд|word|microsoft\s+word)(?:\s+(.+))?$"), "word_open"),
+    (re.compile(r"^(?:новый\s+документ|создай\s+документ|new\s+document)$"), "word_new"),
+    (re.compile(r"^(?:сохрани\s+документ|save\s+document)$"), "word_save"),
     # Open explorer folders
     (re.compile(r"^(?:открой|открыть|запусти|запустить)\s+(?:проводник|explorer|файловый\s+менеджер|файлы)$"), "explorer"),
     (re.compile(r"^(?:открой|открыть)\s+(?:папку\s+)?загрузки$"), "downloads"),
@@ -314,6 +369,75 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
     if action == "spotify_library":
         return _ok(spotify_act.play_from_library(payload))
 
+    if action == "mode_work":
+        return _ok(workflows.work_mode())
+
+    if action == "mode_code":
+        return _ok(workflows.coding_mode())
+
+    if action == "mode_chill":
+        return _ok(workflows.chill_mode())
+
+    if action == "mode_game":
+        return _ok(games.game_mode(payload))
+
+    if action == "stack":
+        return _ok(workflows.stack_status())
+
+    if action == "discord_open":
+        return _ok(discord_app.open_discord())
+
+    if action == "discord_mute":
+        return _ok(discord_app.toggle_mute())
+
+    if action == "discord_deafen":
+        return _ok(discord_app.toggle_deafen())
+
+    if action == "discord_invite":
+        return _ok(discord_app.join_invite(payload))
+
+    if action == "chrome_new_tab":
+        return _ok(chrome_app.new_tab(payload or None))
+
+    if action == "chrome_close_tab":
+        return _ok(chrome_app.close_tab())
+
+    if action == "chrome_reopen_tab":
+        return _ok(chrome_app.reopen_tab())
+
+    if action == "chrome_refresh":
+        return _ok(chrome_app.refresh())
+
+    if action == "chrome_incognito":
+        return _ok(chrome_app.incognito(payload or None))
+
+    if action == "chrome_site":
+        return _ok(chrome_app.open_site(payload))
+
+    if action == "launch_cs2":
+        return _ok(games.launch_cs2())
+
+    if action == "launch_pubg":
+        return _ok(games.launch_pubg())
+
+    if action == "cursor_open":
+        return _ok(cursor_app.open_cursor(payload or None))
+
+    if action == "cursor_new":
+        return _ok(cursor_app.new_window())
+
+    if action == "cursor_jarvis":
+        return _ok(cursor_app.open_jarvis_repo())
+
+    if action == "word_open":
+        return _ok(word_app.open_word(payload or None))
+
+    if action == "word_new":
+        return _ok(word_app.new_document())
+
+    if action == "word_save":
+        return _ok(word_app.save_document())
+
     if action == "explorer":
         return _ok(f"{random.choice(config.ACKNOWLEDGMENTS)} Открываю проводник.", act.open_explorer())
 
@@ -334,12 +458,31 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
 
     if action == "chrome":
         if payload:
-            if payload in {"youtube", "ютуб", "ютубе"}:
-                return _ok("Открываю YouTube.", act.open_url("https://www.youtube.com"))
-            return _ok("Открываю Chrome с поиском.", act.search_web(payload))
-        return _ok(random.choice(config.ACKNOWLEDGMENTS), act.open_chrome())
+            return _ok(chrome_app.open_site(payload))
+        return _ok(random.choice(config.ACKNOWLEDGMENTS), chrome_app.open_chrome())
 
     if action == "open":
+        # Route favorite stack apps through dedicated helpers.
+        key = payload.strip().lower()
+        favorites = {
+            "дискорд": discord_app.open_discord,
+            "discord": discord_app.open_discord,
+            "курсор": cursor_app.open_cursor,
+            "cursor": cursor_app.open_cursor,
+            "ворд": word_app.open_word,
+            "word": word_app.open_word,
+            "кс": games.launch_cs2,
+            "кс2": games.launch_cs2,
+            "cs": games.launch_cs2,
+            "cs2": games.launch_cs2,
+            "пабг": games.launch_pubg,
+            "pubg": games.launch_pubg,
+            "спотифай": spotify_act.open_spotify,
+            "spotify": spotify_act.open_spotify,
+        }
+        if key in favorites:
+            return _ok(favorites[key]())
+
         known_sites = {
             "youtube",
             "ютуб",
@@ -355,18 +498,19 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
             "новости",
             "github",
             "гитхаб",
+            "chatgpt",
+            "чатгпт",
         }
         first = payload.split()[0] if payload else ""
         if payload in known_sites or first in known_sites:
             return _ok(
                 random.choice(config.ACKNOWLEDGMENTS),
-                act.open_app(payload if payload in known_sites else first),
+                chrome_app.open_site(payload if payload in known_sites else first),
             )
         wiki = re.match(r"^(?:википедию|wikipedia)\s+(?:про\s+|о(?:б)?\s+)?(.+)$", payload)
         if wiki:
             q = wiki.group(1)
             return _ok(f"Ищу {q} в Википедии.", act.search_web(f"site:wikipedia.org {q}"))
-        # "открой погоду в москве"
         weather = re.match(r"^погод[ауе]\s+(?:в|во|для)\s+(.+)$", payload)
         if weather:
             city = weather.group(1)
@@ -418,12 +562,11 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
 
     if action == "help":
         help_text = (
-            "Я умею искать в Google и YouTube, включать песни в Spotify, "
-            "открывать приложения и папки, говорить время и дату, "
-            "управлять громкостью, делать скриншоты, считать, шутить, "
-            "вести заметки и напоминания, смотреть погоду, "
-            "блокировать и перезагружать компьютер. "
-            "Пример: джарвис, включи Bohemian Rhapsody в спотифай."
+            "Заточен под ваш стек: Discord, Chrome, Spotify, CS2, PUBG, Cursor и Word. "
+            "Примеры: рабочий режим; игровой режим кс; го в пабг; "
+            "открой курсор; новый документ; мют дискорд; "
+            "включи трек в спотифай; новая вкладка; инкогнито. "
+            "Также заметки, напоминания, скриншоты и поиск."
         )
         return _ok(help_text)
 

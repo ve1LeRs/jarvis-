@@ -55,16 +55,17 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(result.ok)
         mocked.assert_called_once()
 
-    @mock.patch("jarvis.actions.system.open_chrome", return_value="chrome")
+    @mock.patch("jarvis.actions.chrome_app.open_chrome", return_value="chrome")
     def test_chrome(self, mocked) -> None:
         result = parse_and_run("открой хром")
         self.assertTrue(result.ok)
         mocked.assert_called_once()
 
-    @mock.patch("jarvis.actions.system.open_url", return_value="yt")
+    @mock.patch("jarvis.actions.chrome_app.open_site", return_value="yt")
     def test_youtube(self, mocked) -> None:
         result = parse_and_run("открой ютуб")
         self.assertTrue(result.ok)
+        mocked.assert_called_once_with("ютуб")
 
     def test_time(self) -> None:
         result = parse_and_run("который час")
