@@ -52,20 +52,26 @@ def parse_delay(phrase: str) -> tuple[int, str] | None:
     text = (phrase or "").strip().lower().replace("ё", "е")
 
     absolute = re.match(
-        r"^(?:напомни(?:ть)?\s+(?:мне\s+)?)?(?:в|во)\s+(\d{1,2})(?:[:\.](\d{2}))?\s+(.+)$",
+        r"^(?:напомни(?:ть)?\s+(?:мне\s+)?)?(?:в|во)\s+(\d{1,2})(?:[:\.\s](\d{2}))?\s+(.+)$",
         text,
     )
     if absolute:
         hour = int(absolute.group(1))
         minute = int(absolute.group(2) or "0")
         body = absolute.group(3).strip()
+        # Guard against "в 18 00 проверить" where body accidentally starts with seconds
+        if body[:2].isdigit() and len(body) > 2 and body[2] == " ":
+            # already parsed minute from group 2; ok
+            pass
         if not body or hour > 23 or minute > 59:
             return None
+        # If body still begins with "00 слово", strip mistaken minute leftover
+        body = re.sub(r"^\d{2}\s+", "", body).strip() or body
         now = datetime.now()
         when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if when <= now:
             when = when + timedelta(days=1)
-        seconds = int((when - now).total_seconds())
+        seconds = int((when - now).total_seconds() + 0.999)
         return max(1, seconds), body
 
     match = re.match(

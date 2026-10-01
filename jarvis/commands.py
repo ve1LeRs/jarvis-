@@ -46,12 +46,29 @@ def _fail(spoken: str | None = None) -> Result:
 
 # Patterns are checked in order. Group 1 is usually the payload.
 _RULES: list[tuple[re.Pattern[str], str]] = [
+    # Macros first — "когда говорю" must not fall into Q&A
+    (
+        re.compile(
+            r"^(?:когда\s+говорю|если\s+говорю|запомни\s+макрос)\s+(.+?)\s+"
+            r"(?:то|—|-|делай|запускай|выполни)\s+(.+)$"
+        ),
+        "macro_add",
+    ),
+    (re.compile(r"^(?:макросы|мои\s+макросы)$"), "macro_list"),
+    (re.compile(r"^(?:удали\s+макрос)\s+(.+)$"), "macro_del"),
     # YouTube search before generic search
     (re.compile(r"^(?:найди|поищи|поиск)\s+(?:на\s+)?(?:ютуб[еу]?|youtube)\s+(.+)$"), "youtube_search"),
     # Spoken web answers / questions (before generic search)
     (
         re.compile(
-            r"^(?:как|почему|зачем|чем|когда|где|откуда|what|how|why|when|where)\b(.+)$"
+            r"^(?:как|почему|зачем|чем|где|откуда|what|how|why|where)\b(.+)$"
+        ),
+        "answer",
+    ),
+    # "когда" as a question, but not "когда говорю"
+    (
+        re.compile(
+            r"^(?:когда)\b(?!\s+говорю)(.+)$"
         ),
         "answer",
     ),
@@ -72,7 +89,7 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:очисти\s+заметки|удали\s+заметки)$"), "note_clear"),
     (re.compile(r"^(?:через\s+\d+.+)$"), "remind"),
     (re.compile(r"^(?:напомни(?:ть)?\s+.+)$"), "remind"),
-    (re.compile(r"^(?:в|во)\s+\d{1,2}(?:[:.]\d{2})?\s+.+$"), "remind"),
+    (re.compile(r"^(?:в|во)\s+\d{1,2}(?:[:.\s]\d{2})?\s+.+$"), "remind"),
     (re.compile(r"^(?:напоминания|мои\s+напоминания)$"), "remind_list"),
     (re.compile(r"^(?:отмени\s+напоминания|очисти\s+напоминания)$"), "remind_clear"),
     # Todos / daily brief
@@ -80,16 +97,6 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:дела|список\s+дел|мои\s+дела|todos?)$"), "todo_list"),
     (re.compile(r"^(?:сделал|готово|выполнил(?:\s+дело)?)\s*(.*)$"), "todo_done"),
     (re.compile(r"^(?:что\s+сегодня|брифинг|на\s+сегодня|today)$"), "today"),
-    # Macros
-    (
-        re.compile(
-            r"^(?:когда\s+говорю|если\s+говорю|запомни\s+макрос)\s+(.+?)\s+"
-            r"(?:то|—|-|делай|запускай|выполни)\s+(.+)$"
-        ),
-        "macro_add",
-    ),
-    (re.compile(r"^(?:макросы|мои\s+макросы)$"), "macro_list"),
-    (re.compile(r"^(?:удали\s+макрос)\s+(.+)$"), "macro_del"),
     # Screen / selection
     (re.compile(r"^(?:прочитай\s+выделение|что\s+в\s+выделении|read\s+selection)$"), "read_selection"),
     (re.compile(r"^(?:что\s+на\s+экране|прочитай\s+экран|whats?\s+on\s+screen)$"), "read_screen"),
@@ -275,9 +282,9 @@ def parse_and_run(command: str, *, _depth: int = 0) -> Result:
             continue
         payload = (match.group(1) if match.lastindex else "") or ""
         payload = payload.strip()
-        # Reminders need the fuller phrase (with numbers/units).
+        # Reminders need the original phrase (keep "18:00" colons).
         if action == "remind":
-            payload = text
+            payload = original.lower().replace("ё", "е")
         # Calculator: prefer original expression (operators may be spaced).
         if action == "calc":
             raw_match = re.search(
@@ -287,7 +294,11 @@ def parse_and_run(command: str, *, _depth: int = 0) -> Result:
             )
             if raw_match:
                 payload = raw_match.group(1).strip()
-        result = _dispatch(action, payload, text)
+        # Macros also need original separators.
+        if action == "macro_add":
+            payload = original.lower().replace("ё", "е")
+        dispatch_raw = payload if action in {"remind", "macro_add"} else text
+        result = _dispatch(action, payload, dispatch_raw)
         if result.ok and action not in {
             "repeat",
             "history",
@@ -378,14 +389,14 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
         return _ok(memory.today_brief())
 
     if action == "macro_add":
-        # payload unused — groups come from raw match via special handling below
+        source = payload or raw
         match = re.match(
             r"^(?:когда\s+говорю|если\s+говорю|запомни\s+макрос)\s+(.+?)\s+"
-            r"(?:то|—|-|делай|запускай|выполни)\s+(.+)$",
-            raw,
+            r"(?:то|—|-|–|делай|запускай|выполни)\s+(.+)$",
+            source,
         )
         if not match:
-            return _fail("Скажите: когда говорю погнали — запускай пабг.")
+            return _fail("Скажите: когда говорю погнали — запусти пабг.")
         return _ok(macros.add_macro(match.group(1), match.group(2)))
 
     if action == "macro_list":
