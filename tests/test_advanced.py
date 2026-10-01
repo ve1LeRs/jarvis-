@@ -56,11 +56,18 @@ class AdvancedFeatureTests(unittest.TestCase):
         self.assertIn("сборку", result.spoken)
 
     def test_macro_learn_and_run(self) -> None:
-        learned = parse_and_run("когда говорю погнали то запускай пабг")
+        learned = parse_and_run("когда говорю погнали запускай пабг")
+        self.assertTrue(learned.ok)
+        self.assertIn("запусти пабг", learned.spoken)
+        with mock.patch("jarvis.actions.games.launch_pubg", return_value="PUBG"):
+            result = parse_and_run("погнали")
+            self.assertTrue(result.ok)
+            self.assertIn("PUBG", result.spoken)
+
+    def test_macro_learn_with_to_separator(self) -> None:
+        learned = parse_and_run("когда говорю погнали то запусти пабг")
         self.assertTrue(learned.ok)
         with mock.patch("jarvis.actions.games.launch_pubg", return_value="PUBG"):
-            # Macro maps to "запускай пабг" which may not parse — map to known command
-            macros.add_macro("погнали", "запусти пабг")
             result = parse_and_run("погнали")
             self.assertTrue(result.ok)
             self.assertIn("PUBG", result.spoken)

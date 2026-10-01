@@ -26,6 +26,35 @@ def normalize_phrase(phrase: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def parse_learn(source: str) -> tuple[str, str] | None:
+    """Parse «когда говорю <phrase> то/запускай <command>» into (phrase, command)."""
+    text = (source or "").lower().replace("ё", "е").strip()
+    text = re.sub(r"\s+", " ", text)
+    match = re.match(
+        r"^(?:когда\s+говорю|если\s+говорю|запомни\s+макрос)\s+(.+)$",
+        text,
+    )
+    if not match:
+        return None
+    rest = match.group(1).strip()
+    # Explicit separator first so «погнали то запусти пабг» keeps phrase=погнали.
+    split = re.match(r"^(.+?)\s+(?:то|—|-|–)\s+(.+)$", rest)
+    if not split:
+        split = re.match(
+            r"^(.+?)\s+((?:делай|запускай|выполни|запусти)\s+.+)$",
+            rest,
+        )
+    if not split:
+        return None
+    phrase = split.group(1).strip()
+    command = split.group(2).strip()
+    command = re.sub(r"^запускай\b", "запусти", command)
+    command = re.sub(r"^делай\b", "сделай", command)
+    if not phrase or not command:
+        return None
+    return phrase, command
+
+
 def add_macro(phrase: str, command: str) -> str:
     key = normalize_phrase(phrase)
     cmd = (command or "").strip()

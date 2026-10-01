@@ -46,11 +46,10 @@ def _fail(spoken: str | None = None) -> Result:
 
 # Patterns are checked in order. Group 1 is usually the payload.
 _RULES: list[tuple[re.Pattern[str], str]] = [
-    # Macros first — "когда говорю" must not fall into Q&A
+    # Macros first — "когда говорю" must not fall into Q&A.
     (
         re.compile(
-            r"^(?:когда\s+говорю|если\s+говорю|запомни\s+макрос)\s+(.+?)\s+"
-            r"(?:то|—|-|делай|запускай|выполни)\s+(.+)$"
+            r"^(?:когда\s+говорю|если\s+говорю|запомни\s+макрос)\s+(.+)$"
         ),
         "macro_add",
     ),
@@ -209,18 +208,21 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     # Games
     (
         re.compile(
-            r"^(?:запусти|открой|открыть|play)\s+"
+            r"^(?:запусти|запускай|открой|открыть|play)\s+"
             r"(?:кс(?:\s*2)?|cs(?:\s*2)?|counter-strike(?:\s*2)?|контра)$"
         ),
         "launch_cs2",
     ),
     (
         re.compile(
-            r"^(?:запусти|открой|открыть|play)\s+"
+            r"^(?:запусти|запускай|открой|открыть|play)\s+"
             r"(?:пабг|pubg|пабджи|пубг|battlegrounds)$"
         ),
         "launch_pubg",
     ),
+    # Bare game names (macros often map to just «пабг» / «кс»)
+    (re.compile(r"^(?:кс(?:\s*2)?|cs(?:\s*2)?|counter-strike(?:\s*2)?|контра)$"), "launch_cs2"),
+    (re.compile(r"^(?:пабг|pubg|пабджи|пубг|battlegrounds)$"), "launch_pubg"),
     # Cursor
     (re.compile(r"^(?:открой|открыть|запусти)\s+(?:курсор|cursor)(?:\s+(.+))?$"), "cursor_open"),
     (re.compile(r"^(?:новое\s+окно\s+курсора|cursor\s+new\s+window)$"), "cursor_new"),
@@ -389,15 +391,11 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
         return _ok(memory.today_brief())
 
     if action == "macro_add":
-        source = payload or raw
-        match = re.match(
-            r"^(?:когда\s+говорю|если\s+говорю|запомни\s+макрос)\s+(.+?)\s+"
-            r"(?:то|—|-|–|делай|запускай|выполни)\s+(.+)$",
-            source,
-        )
-        if not match:
+        parsed = macros.parse_learn(payload or raw)
+        if not parsed:
             return _fail("Скажите: когда говорю погнали — запусти пабг.")
-        return _ok(macros.add_macro(match.group(1), match.group(2)))
+        phrase, command = parsed
+        return _ok(macros.add_macro(phrase, command))
 
     if action == "macro_list":
         return _ok(macros.list_macros())
