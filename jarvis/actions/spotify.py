@@ -97,6 +97,48 @@ def open_library() -> str:
     return open_liked_songs()
 
 
+def open_playlist(name: str) -> str:
+    """Search playlists by name and open the first match (URI search)."""
+    q = (name or "").strip()
+    if not q:
+        return open_spotify()
+    open_spotify()
+    time.sleep(0.4)
+    encoded = urllib.parse.quote(f"playlist:{q}")
+    if _open_uri(f"spotify:search:{encoded}"):
+        _press_enter(times=2, delay=1.6)
+        return f"Ищу плейлист «{q}» в Spotify."
+    return play_song(q)
+
+
+def open_radio_or_wave() -> str:
+    """Best-effort open Spotify Radio / Home mix."""
+    open_spotify()
+    time.sleep(0.5)
+    # Home / made-for-you style landing
+    if _open_uri("spotify:app:home"):
+        return "Открываю главную Spotify — там волны и миксы."
+    if _open_uri("https://open.spotify.com"):
+        return "Открываю Spotify Home."
+    return open_spotify()
+
+
+def focus_spotify_volume(direction: str) -> str:
+    """Change system volume after focusing Spotify (best-effort 'spotify volume')."""
+    from jarvis.actions import system as sys_act
+    from jarvis.actions import launch as launch_mod
+
+    open_spotify()
+    time.sleep(0.4)
+    launch_mod.focus_window(["spotify"])
+    if direction in {"up", "громче"}:
+        return "Громкость Spotify выше. " + sys_act.volume_up()
+    if direction in {"down", "тише"}:
+        return "Громкость Spotify ниже. " + sys_act.volume_down()
+    return sys_act.volume_mute()
+
+
+
 def _press_enter(times: int = 1, delay: float = 1.2) -> None:
     """Best-effort: after search opens, Enter often starts the first result."""
     if SYSTEM != "Windows":

@@ -12,6 +12,7 @@ DATA_DIR = Path.home() / ".jarvis"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 NOTES_FILE = DATA_DIR / "notes.json"
 HISTORY_FILE = DATA_DIR / "history.json"
+TODOS_FILE = DATA_DIR / "todos.json"
 
 _lock = threading.RLock()
 
@@ -129,3 +130,79 @@ def recent_history(limit: int = 5) -> list[str]:
     if not isinstance(history, list):
         return []
     return [str(item.get("command", "")) for item in history[-limit:] if item.get("command")]
+
+
+def add_todo(text: str) -> str:
+    text = (text or "").strip()
+    if not text:
+        return "Пустое дело."
+    with _lock:
+        todos = _read_json(TODOS_FILE, [])
+        if not isinstance(todos, list):
+            todos = []
+        todos.append(
+            {
+                "text": text,
+                "done": False,
+                "created": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+        _write_json(TODOS_FILE, todos)
+    return f"Добавил в дела: {text}."
+
+
+def list_todos() -> str:
+    with _lock:
+        todos = _read_json(TODOS_FILE, [])
+    if not isinstance(todos, list):
+        return "Список дел пуст."
+    open_items = [t for t in todos if not t.get("done")]
+    if not open_items:
+        return "На сегодня открытых дел нет."
+    lines = [f"{i}. {t.get('text', '')}" for i, t in enumerate(open_items[:10], 1)]
+    return "Дела: " + "; ".join(lines)
+
+
+def complete_todo(query: str) -> str:
+    needle = (query or "").strip().lower()
+    with _lock:
+        todos = _read_json(TODOS_FILE, [])
+        if not isinstance(todos, list) or not todos:
+            return "Список дел пуст."
+        for item in todos:
+            if item.get("done"):
+                continue
+            text = str(item.get("text", ""))
+            if not needle or needle in text.lower():
+                item["done"] = True
+                _write_json(TODOS_FILE, todos)
+                return f"Отметил выполненным: {text}."
+    return "Не нашёл такое дело."
+
+
+def today_brief() -> str:
+    """Short daily briefing from todos + reminders-like notes."""
+    with _lock:
+        todos = _read_json(TODOS_FILE, [])
+        notes = _read_json(NOTES_FILE, [])
+    open_todos = [t.get("text", "") for t in todos if isinstance(todos, list) and not t.get("done")]
+    recent_notes = []
+    if isinstance(notes, list) and notes:
+        recent_notes = [n.get("text", "") for n in notes[-3:]]
+    weekday = (
+        "понедельник",
+        "вторник",
+        "среда",
+        "четверг",
+        "пятница",
+        "суббота",
+        "воскресенье",
+    )[datetime.now().weekday()]
+    parts = [f"Сегодня {weekday}, {datetime.now().strftime('%d.%m')}."]
+    if open_todos:
+        parts.append("Дела: " + "; ".join(open_todos[:5]) + ".")
+    else:
+        parts.append("Открытых дел нет.")
+    if recent_notes:
+        parts.append("Недавние заметки: " + "; ".join(recent_notes) + ".")
+    return " ".join(parts)

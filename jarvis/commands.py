@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from typing import Callable
 
 from jarvis import config
+from jarvis import confirm
+from jarvis import context
+from jarvis import macros
 from jarvis import memory
 from jarvis import reminders
 from jarvis.actions import chrome_app
@@ -16,6 +19,7 @@ from jarvis.actions import discord_app
 from jarvis.actions import fun as fun_act
 from jarvis.actions import games
 from jarvis.actions import knowledge
+from jarvis.actions import screen
 from jarvis.actions import spotify as spotify_act
 from jarvis.actions import system as act
 from jarvis.actions import word_app
@@ -33,11 +37,11 @@ Handler = Callable[[str], Result]
 
 
 def _ok(spoken: str, detail: str = "") -> Result:
-    return Result(True, spoken, detail or spoken)
+    return Result(True, context.adapt_speech(spoken), detail or spoken)
 
 
 def _fail(spoken: str | None = None) -> Result:
-    return Result(False, spoken or random.choice(config.NOT_UNDERSTOOD))
+    return Result(False, context.adapt_speech(spoken or random.choice(config.NOT_UNDERSTOOD)))
 
 
 # Patterns are checked in order. Group 1 is usually the payload.
@@ -68,10 +72,32 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:очисти\s+заметки|удали\s+заметки)$"), "note_clear"),
     (re.compile(r"^(?:через\s+\d+.+)$"), "remind"),
     (re.compile(r"^(?:напомни(?:ть)?\s+.+)$"), "remind"),
+    (re.compile(r"^(?:в|во)\s+\d{1,2}(?:[:.]\d{2})?\s+.+$"), "remind"),
     (re.compile(r"^(?:напоминания|мои\s+напоминания)$"), "remind_list"),
     (re.compile(r"^(?:отмени\s+напоминания|очисти\s+напоминания)$"), "remind_clear"),
+    # Todos / daily brief
+    (re.compile(r"^(?:добавь\s+в\s+дела|новое\s+дело|todo)\s+(.+)$"), "todo_add"),
+    (re.compile(r"^(?:дела|список\s+дел|мои\s+дела|todos?)$"), "todo_list"),
+    (re.compile(r"^(?:сделал|готово|выполнил(?:\s+дело)?)\s*(.*)$"), "todo_done"),
+    (re.compile(r"^(?:что\s+сегодня|брифинг|на\s+сегодня|today)$"), "today"),
+    # Macros
+    (
+        re.compile(
+            r"^(?:когда\s+говорю|если\s+говорю|запомни\s+макрос)\s+(.+?)\s+"
+            r"(?:то|—|-|делай|запускай|выполни)\s+(.+)$"
+        ),
+        "macro_add",
+    ),
+    (re.compile(r"^(?:макросы|мои\s+макросы)$"), "macro_list"),
+    (re.compile(r"^(?:удали\s+макрос)\s+(.+)$"), "macro_del"),
+    # Screen / selection
+    (re.compile(r"^(?:прочитай\s+выделение|что\s+в\s+выделении|read\s+selection)$"), "read_selection"),
+    (re.compile(r"^(?:что\s+на\s+экране|прочитай\s+экран|whats?\s+on\s+screen)$"), "read_screen"),
+    # Confirmations
+    (re.compile(r"^(?:подтверди|подтверждаю|точно|да\s+подтверди|confirm)$"), "confirm"),
     (re.compile(r"^(?:повтори|ещё\s+раз|again|repeat)$"), "repeat"),
     (re.compile(r"^(?:история|последние\s+команды)$"), "history"),
+    (re.compile(r"^(?:контекст|какой\s+режим|status\s+mode)$"), "ctx_status"),
     # Media / volume
     (re.compile(r"^(?:громче|увеличь\s+громкость|volume\s+up)$"), "vol_up"),
     (re.compile(r"^(?:тише|уменьши\s+громкость|volume\s+down)$"), "vol_down"),
@@ -137,6 +163,15 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:рабочий\s+режим|режим\s+работы|work\s+mode)$"), "mode_work"),
     (re.compile(r"^(?:режим\s+кода|coding\s+mode)$"), "mode_code"),
     (re.compile(r"^(?:чилл(?:\s+режим)?|режим\s+чилл|chill\s+mode)$"), "mode_chill"),
+    (re.compile(r"^(?:утренний\s+режим|доброе\s+утро|morning\s+mode)$"), "mode_morning"),
+    (re.compile(r"^(?:вечерний\s+режим|добрый\s+вечер|evening\s+mode)$"), "mode_evening"),
+    (
+        re.compile(
+            r"^(?:с\s+друзьями|с\s+другой|friends)\s+"
+            r"(.+)$"
+        ),
+        "mode_friends",
+    ),
     (
         re.compile(
             r"^(?:игровой\s+режим|го\s+в|режим\s+игры|game\s+mode)\s+"
@@ -147,6 +182,11 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:го\s+в\s+кс(?:\s*2)?|погнали\s+в\s+кс(?:\s*2)?)$"), "launch_cs2"),
     (re.compile(r"^(?:го\s+в\s+пабг|погнали\s+в\s+пабг)$"), "launch_pubg"),
     (re.compile(r"^(?:мой\s+стек|мои\s+программы|любимые\s+программы)$"), "stack"),
+    # Spotify extras
+    (re.compile(r"^(?:плейлист|открой\s+плейлист)\s+(.+)$"), "spotify_playlist"),
+    (re.compile(r"^(?:моя\s+волна|радио\s+спотифай|spotify\s+radio)$"), "spotify_wave"),
+    (re.compile(r"^(?:громче\s+спотифай|spotify\s+volume\s+up)$"), "spotify_vol_up"),
+    (re.compile(r"^(?:тише\s+спотифай|spotify\s+volume\s+down)$"), "spotify_vol_down"),
     # Discord
     (re.compile(r"^(?:открой|открыть|запусти)\s+(?:дискорд|discord)$"), "discord_open"),
     (re.compile(r"^(?:мют|мут|замьють|размьють|mute)\s*(?:дискорд|discord)?$"), "discord_mute"),
@@ -213,7 +253,7 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
-def parse_and_run(command: str) -> Result:
+def parse_and_run(command: str, *, _depth: int = 0) -> Result:
     original = (command or "").strip()
     text = original.lower().replace("ё", "е")
     # Keep math operators for calculator commands; strip other punctuation.
@@ -222,6 +262,12 @@ def parse_and_run(command: str) -> Result:
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return _fail()
+
+    # Custom macros win early (exact phrase match).
+    if _depth < 3:
+        mapped = macros.resolve(text)
+        if mapped and macros.normalize_phrase(mapped) != text:
+            return parse_and_run(mapped, _depth=_depth + 1)
 
     for pattern, action in _RULES:
         match = pattern.match(text)
@@ -319,6 +365,48 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
     if action == "remind_clear":
         return _ok(reminders.clear_reminders())
 
+    if action == "todo_add":
+        return _ok(memory.add_todo(payload))
+
+    if action == "todo_list":
+        return _ok(memory.list_todos())
+
+    if action == "todo_done":
+        return _ok(memory.complete_todo(payload))
+
+    if action == "today":
+        return _ok(memory.today_brief())
+
+    if action == "macro_add":
+        # payload unused — groups come from raw match via special handling below
+        match = re.match(
+            r"^(?:когда\s+говорю|если\s+говорю|запомни\s+макрос)\s+(.+?)\s+"
+            r"(?:то|—|-|делай|запускай|выполни)\s+(.+)$",
+            raw,
+        )
+        if not match:
+            return _fail("Скажите: когда говорю погнали — запускай пабг.")
+        return _ok(macros.add_macro(match.group(1), match.group(2)))
+
+    if action == "macro_list":
+        return _ok(macros.list_macros())
+
+    if action == "macro_del":
+        return _ok(macros.remove_macro(payload))
+
+    if action == "read_selection":
+        return _ok(screen.read_selection())
+
+    if action == "read_screen":
+        return _ok(screen.whats_on_screen())
+
+    if action == "confirm":
+        ok, spoken, detail = confirm.confirm()
+        return Result(ok, context.adapt_speech(spoken), detail)
+
+    if action == "ctx_status":
+        return _ok(context.status_text())
+
     if action == "repeat":
         last = memory.last_command()
         if not last:
@@ -403,11 +491,32 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
     if action == "mode_chill":
         return _ok(workflows.chill_mode())
 
+    if action == "mode_morning":
+        return _ok(workflows.morning_mode())
+
+    if action == "mode_evening":
+        return _ok(workflows.evening_mode())
+
+    if action == "mode_friends":
+        return _ok(games.friends_mode(payload))
+
     if action == "mode_game":
         return _ok(games.game_mode(payload))
 
     if action == "stack":
         return _ok(workflows.stack_status())
+
+    if action == "spotify_playlist":
+        return _ok(spotify_act.open_playlist(payload))
+
+    if action == "spotify_wave":
+        return _ok(spotify_act.open_radio_or_wave())
+
+    if action == "spotify_vol_up":
+        return _ok(spotify_act.focus_spotify_volume("up"))
+
+    if action == "spotify_vol_down":
+        return _ok(spotify_act.focus_spotify_volume("down"))
 
     if action == "discord_open":
         return _ok(discord_app.open_discord())
@@ -550,22 +659,47 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
         return _ok(act.tell_date())
 
     if action == "shutdown":
-        return _ok(act.shutdown_pc())
+        ok, spoken, detail = confirm.ask(
+            "shutdown",
+            "выключить компьютер через 60 секунд",
+            lambda: (True, act.shutdown_pc(), ""),
+        )
+        return Result(ok, context.adapt_speech(spoken), detail)
 
     if action == "restart":
-        return _ok(act.restart_pc())
+        ok, spoken, detail = confirm.ask(
+            "restart",
+            "перезагрузить компьютер через 60 секунд",
+            lambda: (True, act.restart_pc(), ""),
+        )
+        return Result(ok, context.adapt_speech(spoken), detail)
 
     if action == "sleep":
-        return _ok(act.sleep_pc())
+        ok, spoken, detail = confirm.ask(
+            "sleep",
+            "усыпить компьютер",
+            lambda: (True, act.sleep_pc(), ""),
+        )
+        return Result(ok, context.adapt_speech(spoken), detail)
 
     if action == "cancel_shutdown":
+        ok, spoken, detail = confirm.cancel_pending()
+        if ok:
+            # Also abort OS shutdown if it was already armed.
+            os_msg = act.cancel_shutdown()
+            return _ok(f"{spoken} {os_msg}")
         return _ok(act.cancel_shutdown())
 
     if action == "lock":
         return _ok(act.lock_pc())
 
     if action == "recycle":
-        return _ok(act.empty_recycle_bin())
+        ok, spoken, detail = confirm.ask(
+            "recycle",
+            "очистить корзину",
+            lambda: (True, act.empty_recycle_bin(), ""),
+        )
+        return Result(ok, context.adapt_speech(spoken), detail)
 
     if action == "autostart_on":
         from jarvis import autostart
@@ -587,11 +721,10 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
 
     if action == "help":
         help_text = (
-            "Заточен под ваш стек: Discord, Chrome, Spotify, CS2, PUBG, Cursor и Word. "
-            "Примеры: как переключить раскладку; рабочий режим; го в пабг; "
-            "открой курсор; новый документ; мют дискорд; "
-            "включи трек в спотифай; новая вкладка. "
-            "На вопросы ищу ответ в интернете и озвучиваю кратко."
+            "Стек: Discord, Chrome, Spotify, CS2, PUBG, Cursor, Word. "
+            "Режимы: утренний, вечерний, рабочий, с друзьями кс. "
+            "Умею дела, напоминания в 18:00, макросы, читать экран/выделение, "
+            "отвечать на вопросы голосом. Опасные команды прошу подтвердить."
         )
         return _ok(help_text)
 

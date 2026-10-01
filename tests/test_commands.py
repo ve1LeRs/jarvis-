@@ -87,7 +87,7 @@ class CommandTests(unittest.TestCase):
     def test_help(self) -> None:
         result = parse_and_run("помощь")
         self.assertTrue(result.ok)
-        self.assertIn("раскладк", result.spoken.lower())
+        self.assertIn("макрос", result.spoken.lower())
 
     @mock.patch("jarvis.autostart.enable_autostart", return_value="enabled")
     def test_autostart_on(self, mocked) -> None:

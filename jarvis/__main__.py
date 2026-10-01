@@ -2,6 +2,7 @@
 
 Запуск:
   python -m jarvis                 # голос + HUD
+  python -m jarvis --overlay       # компактный оверлей
   python -m jarvis --background    # фон / автозапуск (трей, без консоли)
   python -m jarvis --text          # текстовый режим
   python -m jarvis --no-ui         # голос без окна
@@ -15,6 +16,7 @@ import sys
 import threading
 
 from jarvis import config
+from jarvis import context
 from jarvis import memory
 from jarvis import reminders
 from jarvis.commands import parse_and_run
@@ -22,7 +24,7 @@ from jarvis import speak as speak_mod
 
 
 def speak(text: str, *, block: bool = True) -> None:
-    speak_mod.speak(text, block=block)
+    speak_mod.speak(context.adapt_speech(text), block=block)
 
 
 reminders.set_speaker(lambda text: speak(text, block=False))
@@ -174,6 +176,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="J.A.R.V.I.S. voice assistant")
     parser.add_argument("--text", action="store_true", help="Text input instead of microphone")
     parser.add_argument("--no-ui", action="store_true", help="Disable HUD window")
+    parser.add_argument(
+        "--overlay",
+        action="store_true",
+        help="Compact always-on-top overlay instead of full HUD",
+    )
     parser.add_argument("--no-speak", action="store_true", help="Disable TTS (print only)")
     parser.add_argument(
         "--background",
@@ -248,13 +255,18 @@ def main(argv: list[str] | None = None) -> int:
             run_voice_loop(on_status)
         return 0
 
-    from jarvis.ui.hud import JarvisHUD
+    if args.overlay:
+        from jarvis.ui.overlay import JarvisOverlay
 
-    hud = JarvisHUD()
+        ui = JarvisOverlay()
+    else:
+        from jarvis.ui.hud import JarvisHUD
+
+        ui = JarvisHUD()
 
     def on_status(msg: str) -> None:
         print(msg)
-        hud.set_status(msg)
+        ui.set_status(msg)
 
     worker = threading.Thread(
         target=run_text_loop if args.text else run_voice_loop,
@@ -263,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     worker.start()
     try:
-        hud.run()
+        ui.run()
     except KeyboardInterrupt:
         pass
     return 0

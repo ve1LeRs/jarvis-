@@ -41,8 +41,33 @@ def _fire(reminder_id: str, text: str) -> None:
 
 
 def parse_delay(phrase: str) -> tuple[int, str] | None:
-    """Parse 'через 5 минут купить молоко' → (seconds, text)."""
+    """Parse relative or absolute reminders into (seconds, text).
+
+    Supports:
+      через 5 минут купить молоко
+      напомни через 2 часа чай
+      напомни в 18:00 созвон
+      в 9:30 позвонить
+    """
     text = (phrase or "").strip().lower().replace("ё", "е")
+
+    absolute = re.match(
+        r"^(?:напомни(?:ть)?\s+(?:мне\s+)?)?(?:в|во)\s+(\d{1,2})(?:[:\.](\d{2}))?\s+(.+)$",
+        text,
+    )
+    if absolute:
+        hour = int(absolute.group(1))
+        minute = int(absolute.group(2) or "0")
+        body = absolute.group(3).strip()
+        if not body or hour > 23 or minute > 59:
+            return None
+        now = datetime.now()
+        when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if when <= now:
+            when = when + timedelta(days=1)
+        seconds = int((when - now).total_seconds())
+        return max(1, seconds), body
+
     match = re.match(
         r"^через\s+(\d+)\s*(секунд[уы]?|сек|минут[уы]?|мин|час(?:а|ов)?|ч)?\s*(?:напомни(?:ть)?\s+)?(.+)$",
         text,
@@ -76,6 +101,9 @@ def schedule(seconds: int, text: str) -> str:
     with _lock:
         _reminders[reminder_id] = Reminder(reminder_id, text, when, timer)
     timer.start()
+    # Absolute-style phrasing when delay is clearly clock-aligned.
+    if seconds >= 90:
+        return f"Хорошо. Напомню в {when.strftime('%H:%M')}: {text}."
     if seconds < 60:
         human = f"{seconds} секунд"
     elif seconds < 3600:
