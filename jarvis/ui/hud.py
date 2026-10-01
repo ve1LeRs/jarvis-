@@ -7,12 +7,14 @@ from tkinter import font as tkfont
 
 from jarvis import config
 from jarvis import memory
+from jarvis import updater
 
 
 class JarvisHUD:
     def __init__(self) -> None:
+        version = updater.version_label()
         self.root = tk.Tk()
-        self.root.title(config.WINDOW_TITLE)
+        self.root.title(f"{config.WINDOW_TITLE} — {version}")
         self.root.configure(bg=config.BG)
         self.root.geometry("760x480")
         self.root.minsize(600, 400)
@@ -50,7 +52,7 @@ class JarvisHUD:
 
         self.subtitle = tk.Label(
             header,
-            text="Just A Rather Very Intelligent System",
+            text=f"Just A Rather Very Intelligent System · {version}",
             fg="#6FA8B8",
             bg=config.BG,
             font=status_font,

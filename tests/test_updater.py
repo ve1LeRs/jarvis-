@@ -61,6 +61,23 @@ class ReleaseUpdaterTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"JARVIS_NO_UPDATE": "1"}):
             self.assertFalse(updater.check_and_update(lambda _m: None))
 
+    def test_version_label(self) -> None:
+        with mock.patch.object(updater, "BUILD", 7):
+            self.assertEqual(updater.version_label(), "сборка 7")
+        with mock.patch.object(updater, "BUILD", 0):
+            self.assertTrue(updater.version_label().startswith("dev"))
+
+    def test_update_notice_shown_once_after_upgrade(self) -> None:
+        settings: dict = {}
+        with mock.patch("jarvis.memory.get_settings", side_effect=lambda: dict(settings)), mock.patch(
+            "jarvis.memory.update_settings", side_effect=lambda **kw: settings.update(kw)
+        ):
+            with mock.patch.object(updater, "BUILD", 5):
+                self.assertIsNone(updater.take_update_notice())  # first run: nothing to compare
+            with mock.patch.object(updater, "BUILD", 6):
+                self.assertEqual(updater.take_update_notice(), "JARVIS обновлён: сборка 5 → 6.")
+                self.assertIsNone(updater.take_update_notice())
+
     def test_frozen_up_to_date_message(self) -> None:
         with mock.patch.object(updater.sys, "frozen", True, create=True), mock.patch.object(
             updater, "_fetch_latest_release", return_value={"tag_name": f"build-{updater.BUILD}"}

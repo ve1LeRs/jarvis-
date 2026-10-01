@@ -8,6 +8,7 @@ from tkinter import font as tkfont
 from jarvis import config
 from jarvis import context
 from jarvis import memory
+from jarvis import updater
 
 
 class JarvisOverlay:
@@ -15,7 +16,7 @@ class JarvisOverlay:
 
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title(config.WINDOW_TITLE)
+        self.root.title(f"{config.WINDOW_TITLE} — {updater.version_label()}")
         self.root.configure(bg=config.BG)
         self.root.geometry("420x96+40+40")
         self.root.resizable(False, False)

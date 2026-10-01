@@ -257,6 +257,38 @@ def status_text() -> str:
     return f"Git: ветка {branch}. {tip}".strip()
 
 
+# --- Version display ---------------------------------------------------------
+
+_LAST_BUILD_KEY = "last_seen_build"
+
+
+def version_label() -> str:
+    """Short human label: «сборка 5» for the exe, «dev abc1234» for a source checkout."""
+    if BUILD:
+        return f"сборка {BUILD}"
+    root = project_root()
+    if is_git_checkout(root):
+        code, sha = _run(["git", "rev-parse", "--short", "HEAD"], cwd=root)
+        if code == 0 and sha:
+            return f"dev {sha}"
+    return "dev"
+
+
+def take_update_notice() -> str | None:
+    """Message to show once after the exe was replaced by a newer build."""
+    if not BUILD:
+        return None
+    from jarvis import memory
+
+    previous = memory.get_settings().get(_LAST_BUILD_KEY)
+    if previous == BUILD:
+        return None
+    memory.update_settings(**{_LAST_BUILD_KEY: BUILD})
+    if isinstance(previous, int) and previous < BUILD:
+        return f"JARVIS обновлён: сборка {previous} → {BUILD}."
+    return None
+
+
 # --- Background loop ---------------------------------------------------------
 
 
