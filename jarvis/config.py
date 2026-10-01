@@ -19,10 +19,11 @@ WAKE_WORDS = (
 # Speech recognition language (Google Web Speech).
 RECOGNITION_LANGUAGE = "ru-RU"
 
-# Edge TTS voice (Russian, male, calm).
+# Edge TTS — male Russian (Dmitry). Keep one voice for the whole phrase.
 TTS_VOICE = os.getenv("JARVIS_VOICE", "ru-RU-DmitryNeural")
-TTS_RATE = "+5%"
-TTS_VOLUME = "+0%"
+TTS_RATE = os.getenv("JARVIS_TTS_RATE", "-5%")
+TTS_VOLUME = os.getenv("JARVIS_TTS_VOLUME", "+0%")
+TTS_PITCH = os.getenv("JARVIS_TTS_PITCH", "-2Hz")
 
 # Listening: only react to wake word, then wait for the full sentence to finish.
 # pause_threshold = silence after speech before we treat the phrase as complete.

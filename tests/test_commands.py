@@ -139,5 +139,32 @@ class ListenFlowTests(unittest.TestCase):
         self.assertEqual(cmd, "открой ютуб")
 
 
+class VoicePickerTests(unittest.TestCase):
+    def test_prefers_male_russian(self) -> None:
+        from jarvis.speak import _pick_male_russian_voice
+
+        class Voice:
+            def __init__(self, name: str, vid: str, languages=None) -> None:
+                self.name = name
+                self.id = vid
+                self.languages = languages or []
+
+        class Engine:
+            def __init__(self, voices) -> None:
+                self._voices = voices
+
+            def getProperty(self, _key: str):
+                return self._voices
+
+        engine = Engine(
+            [
+                Voice("Microsoft Irina Desktop - Russian", "irina", ["ru-RU"]),
+                Voice("Microsoft Pavel - Russian", "pavel", ["ru-RU"]),
+                Voice("Microsoft Zira Desktop - English (United States)", "zira"),
+            ]
+        )
+        self.assertEqual(_pick_male_russian_voice(engine), "pavel")
+
+
 if __name__ == "__main__":
     unittest.main()

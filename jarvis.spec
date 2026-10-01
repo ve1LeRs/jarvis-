@@ -32,7 +32,7 @@ hiddenimports = [
     "winsound",
 ]
 
-for pkg in ("speech_recognition", "edge_tts", "pystray", "pyttsx3"):
+for pkg in ("speech_recognition", "edge_tts", "pystray", "pyttsx3", "pygame"):
     try:
         d, b, h = collect_all(pkg)
         datas += d
