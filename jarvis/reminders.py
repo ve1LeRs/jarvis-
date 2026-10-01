@@ -41,38 +41,35 @@ def _fire(reminder_id: str, text: str) -> None:
 
 
 def parse_delay(phrase: str) -> tuple[int, str] | None:
-    """Parse relative or absolute reminders into (seconds, text).
+    """Backward-compatible: return (seconds, text) from parse_when()."""
+    parsed = parse_when(phrase)
+    if not parsed:
+        return None
+    when, body = parsed
+    seconds = max(1, int((when - datetime.now()).total_seconds() + 0.999))
+    return seconds, body
 
-    Supports:
-      через 5 минут купить молоко
-      напомни через 2 часа чай
-      напомни в 18:00 созвон
-      в 9:30 позвонить
-    """
+
+def parse_when(phrase: str) -> tuple[datetime, str] | None:
+    """Parse relative/absolute reminder phrase into (when, text)."""
     text = (phrase or "").strip().lower().replace("ё", "е")
 
     absolute = re.match(
-        r"^(?:напомни(?:ть)?\s+(?:мне\s+)?)?(?:в|во)\s+(\d{1,2})(?:[:\.\s](\d{2}))?\s+(.+)$",
+        r"^(?:напомни(?:ть)?\s+(?:мне\s+)?)?(?:в|во)\s+(\d{1,2})(?:[:.\s](\d{2}))?\s+(.+)$",
         text,
     )
     if absolute:
         hour = int(absolute.group(1))
         minute = int(absolute.group(2) or "0")
         body = absolute.group(3).strip()
-        # Guard against "в 18 00 проверить" where body accidentally starts with seconds
-        if body[:2].isdigit() and len(body) > 2 and body[2] == " ":
-            # already parsed minute from group 2; ok
-            pass
+        body = re.sub(r"^\d{2}\s+", "", body).strip() or body
         if not body or hour > 23 or minute > 59:
             return None
-        # If body still begins with "00 слово", strip mistaken minute leftover
-        body = re.sub(r"^\d{2}\s+", "", body).strip() or body
         now = datetime.now()
         when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if when <= now:
             when = when + timedelta(days=1)
-        seconds = int((when - now).total_seconds() + 0.999)
-        return max(1, seconds), body
+        return when, body
 
     match = re.match(
         r"^через\s+(\d+)\s*(секунд[уы]?|сек|минут[уы]?|мин|час(?:а|ов)?|ч)?\s*(?:напомни(?:ть)?\s+)?(.+)$",
@@ -96,26 +93,32 @@ def parse_delay(phrase: str) -> tuple[int, str] | None:
         seconds = amount * 3600
     else:
         seconds = amount * 60
-    return max(1, seconds), body
+    return datetime.now() + timedelta(seconds=max(1, seconds)), body
 
 
 def schedule(seconds: int, text: str) -> str:
+    when = datetime.now() + timedelta(seconds=max(1, seconds))
+    return schedule_at(when, text)
+
+
+def schedule_at(when: datetime, text: str) -> str:
     reminder_id = uuid.uuid4().hex[:8]
-    when = datetime.now() + timedelta(seconds=seconds)
+    seconds = max(1, int((when - datetime.now()).total_seconds() + 0.999))
     timer = threading.Timer(seconds, _fire, args=(reminder_id, text))
     timer.daemon = True
     with _lock:
         _reminders[reminder_id] = Reminder(reminder_id, text, when, timer)
     timer.start()
-    # Absolute-style phrasing when delay is clearly clock-aligned.
-    if seconds >= 90:
+    delta = when - datetime.now()
+    if delta.total_seconds() >= 90:
         return f"Хорошо. Напомню в {when.strftime('%H:%M')}: {text}."
-    if seconds < 60:
-        human = f"{seconds} секунд"
-    elif seconds < 3600:
-        human = f"{max(1, seconds // 60)} минут"
+    seconds_i = max(1, int(delta.total_seconds()))
+    if seconds_i < 60:
+        human = f"{seconds_i} секунд"
+    elif seconds_i < 3600:
+        human = f"{max(1, seconds_i // 60)} минут"
     else:
-        human = f"{max(1, seconds // 3600)} час(ов)"
+        human = f"{max(1, seconds_i // 3600)} час(ов)"
     return f"Хорошо. Напомню через {human}: {text}."
 
 

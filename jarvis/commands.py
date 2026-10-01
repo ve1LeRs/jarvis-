@@ -364,11 +364,11 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
         return _ok(memory.clear_notes())
 
     if action == "remind":
-        parsed = reminders.parse_delay(payload)
+        parsed = reminders.parse_when(payload)
         if not parsed:
-            return _fail("Скажите, например: через 5 минут проверить духовку.")
-        seconds, body = parsed
-        return _ok(reminders.schedule(seconds, body))
+            return _fail("Скажите, например: через 5 минут чай — или напомни в 18:00 созвон.")
+        when, body = parsed
+        return _ok(reminders.schedule_at(when, body))
 
     if action == "remind_list":
         return _ok(reminders.list_reminders())
