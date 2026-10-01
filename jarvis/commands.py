@@ -10,6 +10,7 @@ from typing import Callable
 from jarvis import config
 from jarvis import confirm
 from jarvis import context
+from jarvis import facts
 from jarvis import macros
 from jarvis import memory
 from jarvis import reminders
@@ -62,6 +63,18 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     ),
     (re.compile(r"^(?:макросы|мои\s+макросы)$"), "macro_list"),
     (re.compile(r"^(?:удали\s+макрос)\s+(.+)$"), "macro_del"),
+    # Long-term facts before «запомни …» notes and «что …» questions
+    (re.compile(r"^(?:запомни|запомните)\s+(?:что|обо\s+мне|про\s+меня)\s+(.+)$"), "fact_add"),
+    (
+        re.compile(
+            r"^(?:что\s+ты\s+(?:знаешь|помнишь)\s+(?:обо\s+мне|про\s+меня)"
+            r"|что\s+ты\s+(?:обо\s+мне|про\s+меня)\s+(?:знаешь|помнишь)"
+            r"|мои\s+факты|факты\s+обо\s+мне)$"
+        ),
+        "fact_list",
+    ),
+    (re.compile(r"^(?:забудь\s+все\s+(?:обо\s+мне|про\s+меня)|очисти\s+память)$"), "fact_clear"),
+    (re.compile(r"^забудь\s+(?:что\s+|про\s+|об?\s+)?(.+)$"), "fact_forget"),
     # YouTube search before generic search
     (re.compile(r"^(?:найди|поищи|поиск)\s+(?:на\s+)?(?:ютуб[еу]?|youtube)\s+(.+)$"), "youtube_search"),
     # App path detection / on-screen find before generic «найди …»
@@ -410,6 +423,11 @@ def parse_and_run(command: str, *, _depth: int = 0) -> Result:
         if mapped and macros.normalize_phrase(mapped) != text:
             return parse_and_run(mapped, _depth=_depth + 1)
 
+    # «как меня зовут», «когда мой день рождения» — answer from remembered facts.
+    remembered = facts.answer(text)
+    if remembered:
+        return _ok(remembered, "facts")
+
     for pattern, action in _RULES:
         match = pattern.match(text)
         if not match:
@@ -431,6 +449,15 @@ def parse_and_run(command: str, *, _depth: int = 0) -> Result:
         # Macros also need original separators.
         if action == "macro_add":
             payload = original.lower().replace("ё", "е")
+        # Facts keep the user's casing (names, brands).
+        if action == "fact_add":
+            raw_match = re.search(
+                r"(?:запомни|запомните)[\s,]+(?:что|обо\s+мне|про\s+меня)[\s,:—-]+(.+)$",
+                original,
+                flags=re.IGNORECASE,
+            )
+            if raw_match:
+                payload = raw_match.group(1).strip()
         # Calendar ICS URLs keep : / characters from the original line.
         if action == "cal_add":
             raw_match = re.search(
@@ -536,6 +563,23 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
         city = payload or None
         spoken = f"Смотрю погоду{(' в ' + city) if city else ''}."
         return _ok(spoken, act.open_weather(city))
+
+    if action == "fact_add":
+        return _ok(facts.add(payload))
+
+    if action == "fact_list":
+        return _ok(facts.list_text())
+
+    if action == "fact_clear":
+        ok, spoken, detail = confirm.ask(
+            "fact_clear",
+            "стереть всё, что я о вас знаю",
+            lambda: (True, facts.clear(), ""),
+        )
+        return Result(ok, context.adapt_speech(spoken), detail)
+
+    if action == "fact_forget":
+        return _ok(facts.forget(payload))
 
     if action == "note_add":
         return _ok(memory.add_note(payload))
@@ -1045,6 +1089,7 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
             "Стек: Discord, Chrome, Spotify, CS2, PUBG, Cursor, Word. "
             "Режимы: утренний, вечерний, рабочий, матч, с друзьями. "
             "Календарь ICS, дела, напоминания, макросы, OCR/vision «опиши экран», "
+            "память «запомни, что …» и «что ты обо мне знаешь», "
             "Spotify OAuth, войс Discord, плагины, Ollama, мост Telegram/WhatsApp, "
             "push-to-talk Ctrl+Alt+J, «обнови джарвис» без перекачки. "
             "Опасные команды — только после «подтверди»."

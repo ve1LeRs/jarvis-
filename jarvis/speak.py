@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import queue
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -30,6 +33,8 @@ def _play_mp3(path: Path) -> None:
                 pygame.mixer.music.play()
                 while pygame.mixer.music.get_busy():
                     pygame.time.wait(50)
+                if hasattr(pygame.mixer.music, "unload"):
+                    pygame.mixer.music.unload()
                 return
             except Exception:
                 # ffplay / powershell fallback via start
@@ -75,22 +80,99 @@ def _play_mp3(path: Path) -> None:
         print(f"[TTS playback] {exc}", file=sys.stderr)
 
 
-async def _edge_say(text: str) -> Path | None:
+async def _edge_say(text: str, index: int = 0, *, attempts: int = 2) -> Path | None:
     try:
         import edge_tts
-
-        communicate = edge_tts.Communicate(
-            text,
-            voice=config.TTS_VOICE,
-            rate=config.TTS_RATE,
-            volume=config.TTS_VOLUME,
-        )
-        tmp = Path(tempfile.gettempdir()) / "jarvis_speech.mp3"
-        await communicate.save(str(tmp))
-        return tmp
-    except Exception as exc:  # noqa: BLE001
+    except ImportError as exc:
         print(f"[edge-tts] {exc}")
         return None
+
+    # Distinct file per chunk: the next one is written while the previous plays.
+    tmp = Path(tempfile.gettempdir()) / f"jarvis_speech_{os.getpid()}_{index}.mp3"
+    for attempt in range(attempts):
+        try:
+            communicate = edge_tts.Communicate(
+                text,
+                voice=config.TTS_VOICE,
+                rate=config.TTS_RATE,
+                volume=config.TTS_VOLUME,
+            )
+            await communicate.save(str(tmp))
+            return tmp
+        except Exception as exc:  # noqa: BLE001
+            # The Edge service intermittently answers "No audio was received".
+            print(f"[edge-tts] попытка {attempt + 1}: {exc}")
+    return None
+
+
+_SENTENCE_END = re.compile(r"(?<=[.!?…;])\s+")
+
+
+def split_for_speech(
+    text: str,
+    *,
+    first_min: int = 40,
+    first_max: int = 140,
+    max_len: int = 260,
+) -> list[str]:
+    """Split into speakable chunks: a short first one for fast start, larger ones after."""
+    sentences = [s.strip() for s in _SENTENCE_END.split(text) if s.strip()]
+    pieces: list[str] = []
+    for sentence in sentences:
+        while len(sentence) > max_len:
+            cut = sentence.rfind(",", 0, max_len)
+            cut = cut if cut > max_len // 3 else sentence.rfind(" ", 0, max_len)
+            if cut <= 0:
+                cut = max_len
+            pieces.append(sentence[: cut + 1].strip())
+            sentence = sentence[cut + 1 :].strip()
+        if sentence:
+            pieces.append(sentence)
+
+    chunks: list[str] = []
+    for piece in pieces:
+        if not chunks:
+            chunks.append(piece)
+            continue
+        last = chunks[-1]
+        fits = len(last) + 1 + len(piece)
+        if len(chunks) == 1:
+            merge = len(last) < first_min and fits <= first_max
+        else:
+            merge = fits <= max_len
+        if merge:
+            chunks[-1] = f"{last} {piece}"
+        else:
+            chunks.append(piece)
+    return chunks
+
+
+def _speak_streaming(text: str) -> None:
+    """Synthesize chunk N+1 while chunk N is playing."""
+    chunks = split_for_speech(text)
+    ready: queue.Queue[tuple[str, Path | None] | None] = queue.Queue(maxsize=2)
+
+    def _produce() -> None:
+        for i, chunk in enumerate(chunks):
+            try:
+                path = asyncio.run(_edge_say(chunk, i))
+            except Exception as exc:  # noqa: BLE001
+                print(f"[speak] {exc}")
+                path = None
+            ready.put((chunk, path))
+        ready.put(None)
+
+    threading.Thread(target=_produce, daemon=True).start()
+    while (item := ready.get()) is not None:
+        chunk, path = item
+        if path and path.exists():
+            _play_mp3(path)
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        else:
+            _pyttsx3_say(chunk)
 
 
 def _pyttsx3_say(text: str) -> None:
@@ -130,14 +212,7 @@ def speak(text: str, *, block: bool = True) -> None:
 
     def _run() -> None:
         with _speak_lock:
-            try:
-                path = asyncio.run(_edge_say(text))
-                if path and path.exists():
-                    _play_mp3(path)
-                    return
-            except Exception as exc:  # noqa: BLE001
-                print(f"[speak] {exc}")
-            _pyttsx3_say(text)
+            _speak_streaming(text)
 
     if block:
         _run()

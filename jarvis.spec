@@ -26,6 +26,7 @@ hiddenimports = [
     "jarvis.actions.discord_app",
     "jarvis.bridge",
     "jarvis.llm",
+    "jarvis.facts",
     "jarvis.plugins",
     "jarvis.paths",
     "jarvis.proactive",

@@ -11,6 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from jarvis import facts
 from jarvis import memory
 
 FOLLOWUP_KEY = "llm_followup"
@@ -208,6 +209,9 @@ def answer(text: str) -> str | None:
         "Отвечай кратко по-русски, 1–3 предложения, как JARVIS. "
         "Без списков и markdown, если не просят."
     )
+    known = facts.prompt_context()
+    if known:
+        system = f"{system}\n\n{known}"
     # Include short follow-up context
     follow = memory.get_settings().get(FOLLOWUP_KEY) or ""
     prompt = text
