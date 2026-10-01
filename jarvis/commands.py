@@ -13,6 +13,7 @@ from jarvis import context
 from jarvis import macros
 from jarvis import memory
 from jarvis import reminders
+from jarvis.actions import calendar as cal
 from jarvis.actions import chrome_app
 from jarvis.actions import cursor_app
 from jarvis.actions import discord_app
@@ -24,6 +25,10 @@ from jarvis.actions import spotify as spotify_act
 from jarvis.actions import system as act
 from jarvis.actions import word_app
 from jarvis.actions import workflows
+from jarvis import llm
+from jarvis import paths
+from jarvis import plugins
+from jarvis import proactive
 
 
 @dataclass
@@ -57,6 +62,9 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:удали\s+макрос)\s+(.+)$"), "macro_del"),
     # YouTube search before generic search
     (re.compile(r"^(?:найди|поищи|поиск)\s+(?:на\s+)?(?:ютуб[еу]?|youtube)\s+(.+)$"), "youtube_search"),
+    # App path detection before generic «найди …»
+    (re.compile(r"^(?:найди\s+программы|профиль\s+пк|detect\s+apps|автопоиск\s+программ)$"), "paths_detect"),
+    (re.compile(r"^(?:где\s+программы|пути\s+программ|app\s+paths)$"), "paths_status"),
     # Spoken web answers / questions (before generic search)
     (
         re.compile(
@@ -82,6 +90,19 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:найди|найти|поищи|поиск|загугли|google)\s+(?:информацию\s+о(?:б)?\s+|про\s+|о(?:б)?\s+)?(.+)$"), "search"),
     (re.compile(r"^(?:search|look\s+up|find(?:\s+info(?:rmation)?)?(?:\s+about)?)\s+(.+)$"), "search"),
     (re.compile(r"^(?:погода)(?:\s+(?:в|во|для)\s+(.+))?$"), "weather"),
+    # Discord voice memory before generic «запомни …» notes
+    (
+        re.compile(
+            r"^(?:запомни\s+войс(?:\s+канал)?|discord\s+voice)\s+(.+)$"
+        ),
+        "discord_voice_save",
+    ),
+    (
+        re.compile(
+            r"^(?:зайди\s+в\s+войс|войди\s+в\s+войс|join\s+voice|голосовой\s+канал)\s*(.*)$"
+        ),
+        "discord_voice",
+    ),
     # Notes / reminders / memory
     (re.compile(r"^(?:запиши|запомни|заметка|заметку)\s+(.+)$"), "note_add"),
     (re.compile(r"^(?:заметки|покажи\s+заметки|мои\s+заметки)$"), "note_list"),
@@ -96,9 +117,21 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:дела|список\s+дел|мои\s+дела|todos?)$"), "todo_list"),
     (re.compile(r"^(?:сделал|готово|выполнил(?:\s+дело)?)\s*(.*)$"), "todo_done"),
     (re.compile(r"^(?:что\s+сегодня|брифинг|на\s+сегодня|today)$"), "today"),
-    # Screen / selection
+    # Calendar
+    (re.compile(r"^(?:добавь\s+календарь|подключи\s+календарь|calendar\s+add)\s+(.+)$"), "cal_add"),
+    (re.compile(r"^(?:календарь|мой\s+календарь|события\s+сегодня|что\s+в\s+календаре)$"), "cal_today"),
+    (re.compile(r"^(?:обнови\s+календарь|синхронизируй\s+календарь)$"), "cal_refresh"),
+    (re.compile(r"^(?:календари|список\s+календарей)$"), "cal_list"),
+    (re.compile(r"^(?:очисти\s+календари|удали\s+календари)$"), "cal_clear"),
+    # Screen / selection / OCR click
     (re.compile(r"^(?:прочитай\s+выделение|что\s+в\s+выделении|read\s+selection)$"), "read_selection"),
     (re.compile(r"^(?:что\s+на\s+экране|прочитай\s+экран|whats?\s+on\s+screen)$"), "read_screen"),
+    (
+        re.compile(
+            r"^(?:нажми|кликни|click)\s+(?:на\s+)?(?:кнопку\s+|текст\s+)?(.+)$"
+        ),
+        "click_text",
+    ),
     # Confirmations
     (re.compile(r"^(?:подтверди|подтверждаю|точно|да\s+подтверди|confirm)$"), "confirm"),
     (re.compile(r"^(?:повтори|ещё\s+раз|again|repeat)$"), "repeat"),
@@ -198,6 +231,38 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:мют|мут|замьють|размьють|mute)\s*(?:дискорд|discord)?$"), "discord_mute"),
     (re.compile(r"^(?:деф|дефнуть|undeafen|deafen)\s*(?:дискорд|discord)?$"), "discord_deafen"),
     (re.compile(r"^(?:дискорд|discord)\s+(?:инвайт|invite)\s+(.+)$"), "discord_invite"),
+    # Spotify OAuth / queue
+    (re.compile(r"^(?:настрой\s+спотифай|spotify\s+setup|spotify\s+login|войти\s+в\s+спотифай)$"), "spotify_oauth"),
+    (re.compile(r"^(?:статус\s+спотифай|spotify\s+status)$"), "spotify_oauth_status"),
+    (
+        re.compile(
+            r"^(?:сохрани\s+спотифай\s+ключи|spotify\s+keys)\s+(.+)$"
+        ),
+        "spotify_keys",
+    ),
+    (re.compile(r"^(?:в\s+очередь|добавь\s+в\s+очередь|queue)\s+(.+)$"), "spotify_queue"),
+    # Game match / exit
+    (
+        re.compile(
+            r"^(?:матч|режим\s+матча|match\s+mode)\s+(.+)$"
+        ),
+        "mode_match",
+    ),
+    (
+        re.compile(
+            r"^(?:выйди\s+из\s+игры|выход\s+из\s+игрового\s+режима|exit\s+game|закончи\s+матч)$"
+        ),
+        "mode_exit_game",
+    ),
+    # Proactive / paths / plugins / LLM
+    (re.compile(r"^(?:проактивность\s+вкл|включи\s+проактивность)$"), "proactive_on"),
+    (re.compile(r"^(?:проактивность\s+выкл|выключи\s+проактивность)$"), "proactive_off"),
+    (re.compile(r"^(?:проактивность|proactive\s+status)$"), "proactive_status"),
+    (re.compile(r"^(?:плагины|мои\s+плагины|plugins)$"), "plugins_list"),
+    (re.compile(r"^(?:перезагрузи\s+плагины|reload\s+plugins)$"), "plugins_reload"),
+    (re.compile(r"^(?:статус\s+модели|llm\s+status|олл[аа]ма)$"), "llm_status"),
+    (re.compile(r"^(?:спроси\s+модель|локальная\s+модель)\s+(.+)$"), "llm_ask"),
+    (re.compile(r"^(?:push\s+to\s+talk|ptt|горячая\s+клавиша)$"), "ptt_help"),
     # Chrome extras
     (re.compile(r"^(?:новая\s+вкладка|new\s+tab)(?:\s+(.+))?$"), "chrome_new_tab"),
     (re.compile(r"^(?:закрой\s+вкладку|close\s+tab)$"), "chrome_close_tab"),
@@ -299,7 +364,16 @@ def parse_and_run(command: str, *, _depth: int = 0) -> Result:
         # Macros also need original separators.
         if action == "macro_add":
             payload = original.lower().replace("ё", "е")
-        dispatch_raw = payload if action in {"remind", "macro_add"} else text
+        # Calendar ICS URLs keep : / characters from the original line.
+        if action == "cal_add":
+            raw_match = re.search(
+                r"(?:добавь\s+календарь|подключи\s+календарь|calendar\s+add)\s+(.+)$",
+                original,
+                flags=re.IGNORECASE,
+            )
+            if raw_match:
+                payload = raw_match.group(1).strip()
+        dispatch_raw = payload if action in {"remind", "macro_add", "cal_add"} else text
         result = _dispatch(action, payload, dispatch_raw)
         if result.ok and action not in {
             "repeat",
@@ -316,6 +390,26 @@ def parse_and_run(command: str, *, _depth: int = 0) -> Result:
             memory.remember_command(original or text)
         return result
 
+    # Plugins before soft fallback.
+    plugin_hit = plugins.match_and_run(text)
+    if plugin_hit is not None:
+        ok, spoken = plugin_hit
+        result = Result(ok, context.adapt_speech(spoken), spoken)
+        if ok:
+            memory.remember_command(original or text)
+        return result
+
+    # Local LLM: follow-ups and free-form routing.
+    if _depth < 2 and (llm.looks_like_followup(text) or len(text.split()) >= 4):
+        if llm.looks_like_followup(text):
+            answered = llm.answer(text)
+            if answered:
+                memory.remember_command(original or text)
+                return _ok(answered, "llm")
+        routed = llm.route_command(text)
+        if routed and macros.normalize_phrase(routed) != text:
+            return parse_and_run(routed, _depth=_depth + 1)
+
     # Soft fallback: questions / search-like phrases.
     if knowledge.is_question(text) or any(
         w in text for w in ("найди", "поиск", "информац", "что такое", "расскажи", "объясни")
@@ -326,6 +420,11 @@ def parse_and_run(command: str, *, _depth: int = 0) -> Result:
             text,
         ).strip()
         if cleaned:
+            # Prefer local LLM answer when available for open questions.
+            answered = llm.answer(cleaned) if knowledge.is_question(text) else None
+            if answered:
+                memory.remember_command(original or text)
+                return _ok(answered, "llm")
             action = "answer" if knowledge.is_question(text) else "search"
             result = _dispatch(action, cleaned, text)
             if result.ok:
@@ -390,6 +489,21 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
     if action == "today":
         return _ok(memory.today_brief())
 
+    if action == "cal_add":
+        return _ok(cal.add_feed(payload))
+
+    if action == "cal_today":
+        return _ok(cal.today_events_text())
+
+    if action == "cal_refresh":
+        return _ok(cal.refresh_feeds())
+
+    if action == "cal_list":
+        return _ok(cal.list_feeds())
+
+    if action == "cal_clear":
+        return _ok(cal.clear_feeds())
+
     if action == "macro_add":
         parsed = macros.parse_learn(payload or raw)
         if not parsed:
@@ -408,6 +522,9 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
 
     if action == "read_screen":
         return _ok(screen.whats_on_screen())
+
+    if action == "click_text":
+        return _ok(screen.click_text(payload))
 
     if action == "confirm":
         ok, spoken, detail = confirm.confirm()
@@ -516,7 +633,7 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
         return _ok(workflows.stack_status())
 
     if action == "spotify_playlist":
-        return _ok(spotify_act.open_playlist(payload))
+        return _ok(spotify_act.play_playlist_api(payload))
 
     if action == "spotify_wave":
         return _ok(spotify_act.open_radio_or_wave())
@@ -526,6 +643,21 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
 
     if action == "spotify_vol_down":
         return _ok(spotify_act.focus_spotify_volume("down"))
+
+    if action == "spotify_oauth":
+        return _ok(spotify_act.start_oauth_login())
+
+    if action == "spotify_oauth_status":
+        return _ok(spotify_act.oauth_status())
+
+    if action == "spotify_keys":
+        parts = (payload or "").split()
+        if len(parts) >= 2:
+            return _ok(spotify_act.save_client_credentials(parts[0], parts[1]))
+        return _fail("Скажите: сохрани спотифай ключи CLIENT_ID CLIENT_SECRET")
+
+    if action == "spotify_queue":
+        return _ok(spotify_act.queue_song(payload))
 
     if action == "discord_open":
         return _ok(discord_app.open_discord())
@@ -538,6 +670,54 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
 
     if action == "discord_invite":
         return _ok(discord_app.join_invite(payload))
+
+    if action == "discord_voice":
+        return _ok(discord_app.join_voice_channel(payload or None))
+
+    if action == "discord_voice_save":
+        return _ok(discord_app.remember_voice_channel(payload))
+
+    if action == "mode_match":
+        return _ok(games.match_mode(payload))
+
+    if action == "mode_exit_game":
+        return _ok(games.exit_game_mode())
+
+    if action == "proactive_on":
+        return _ok(proactive.enable(True))
+
+    if action == "proactive_off":
+        return _ok(proactive.enable(False))
+
+    if action == "proactive_status":
+        return _ok(proactive.status_text())
+
+    if action == "paths_detect":
+        found = paths.detect_all()
+        return _ok(f"Нашёл программ: {len(found)}. " + paths.status_text())
+
+    if action == "paths_status":
+        return _ok(paths.status_text())
+
+    if action == "plugins_list":
+        return _ok(plugins.list_plugins())
+
+    if action == "plugins_reload":
+        return _ok(plugins.reload())
+
+    if action == "llm_status":
+        return _ok(llm.status_text())
+
+    if action == "llm_ask":
+        answered = llm.answer(payload)
+        if answered:
+            return _ok(answered, "llm")
+        return _fail(llm.status_text())
+
+    if action == "ptt_help":
+        from jarvis import hotkeys
+
+        return _ok(hotkeys.describe_default())
 
     if action == "chrome_new_tab":
         return _ok(chrome_app.new_tab(payload or None))
@@ -731,9 +911,10 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
     if action == "help":
         help_text = (
             "Стек: Discord, Chrome, Spotify, CS2, PUBG, Cursor, Word. "
-            "Режимы: утренний, вечерний, рабочий, с друзьями кс. "
-            "Умею дела, напоминания в 18:00, макросы, читать экран/выделение, "
-            "отвечать на вопросы голосом. Опасные команды прошу подтвердить."
+            "Режимы: утренний, вечерний, рабочий, матч, с друзьями. "
+            "Календарь ICS, дела, напоминания, макросы, OCR и «нажми кнопку», "
+            "Spotify OAuth, войс Discord, плагины, локальная модель Ollama, "
+            "push-to-talk Ctrl+Alt+J. Опасные команды — только после «подтверди»."
         )
         return _ok(help_text)
 

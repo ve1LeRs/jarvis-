@@ -1,11 +1,10 @@
-"""Spotify control: open app, search/play tracks, liked songs.
+"""Spotify control: open app, search/play tracks, liked songs, OAuth wizard.
 
 Works out of the box via Spotify desktop URIs on Windows.
-Optional Web API (search + exact play) if credentials are set:
+Optional Web API via env vars or ~/.jarvis/spotify.json (OAuth wizard):
 
-  SPOTIFY_CLIENT_ID
-  SPOTIFY_CLIENT_SECRET
-  SPOTIFY_REFRESH_TOKEN   # for real playback control / library
+  SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET / SPOTIFY_REFRESH_TOKEN
+  or voice: «настрой спотифай» / «spotify login»
 """
 
 from __future__ import annotations
@@ -20,11 +19,22 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from jarvis import memory
 
 SYSTEM = platform.system()
 
 _TOKEN_CACHE: dict[str, object] = {"access": None, "expires": 0.0}
+SPOTIFY_AUTH_FILE = memory.DATA_DIR / "spotify.json"
+_REDIRECT_PORT = 8732
+_REDIRECT_URI = f"http://127.0.0.1:{_REDIRECT_PORT}/callback"
+_SCOPES = (
+    "user-modify-playback-state user-read-playback-state "
+    "user-library-read playlist-read-private user-read-currently-playing"
+)
 
 
 def _run(command: list[str] | str, *, shell: bool = False) -> None:
@@ -162,12 +172,26 @@ def _press_enter(times: int = 1, delay: float = 1.2) -> None:
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _load_auth() -> dict:
+    data = memory._read_json(SPOTIFY_AUTH_FILE, {})  # noqa: SLF001
+    return data if isinstance(data, dict) else {}
+
+
+def _save_auth(data: dict) -> None:
+    memory._write_json(SPOTIFY_AUTH_FILE, data)  # noqa: SLF001
+
+
+def _creds() -> tuple[str, str, str]:
+    auth = _load_auth()
+    client_id = os.getenv("SPOTIFY_CLIENT_ID") or str(auth.get("client_id") or "")
+    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET") or str(auth.get("client_secret") or "")
+    refresh = os.getenv("SPOTIFY_REFRESH_TOKEN") or str(auth.get("refresh_token") or "")
+    return client_id, client_secret, refresh
+
+
 def _api_configured() -> bool:
-    return bool(
-        os.getenv("SPOTIFY_CLIENT_ID")
-        and os.getenv("SPOTIFY_CLIENT_SECRET")
-        and os.getenv("SPOTIFY_REFRESH_TOKEN")
-    )
+    client_id, client_secret, refresh = _creds()
+    return bool(client_id and client_secret and refresh)
 
 
 def _get_access_token() -> str | None:
@@ -177,9 +201,7 @@ def _get_access_token() -> str | None:
     if cached and now < expires - 30:
         return str(cached)
 
-    client_id = os.getenv("SPOTIFY_CLIENT_ID", "")
-    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "")
-    refresh = os.getenv("SPOTIFY_REFRESH_TOKEN", "")
+    client_id, client_secret, refresh = _creds()
     if not (client_id and client_secret and refresh):
         return None
 
@@ -208,7 +230,187 @@ def _get_access_token() -> str | None:
         return None
     _TOKEN_CACHE["access"] = token
     _TOKEN_CACHE["expires"] = now + float(payload.get("expires_in", 3600))
+    # Persist rotated refresh token if Spotify issued one
+    new_refresh = payload.get("refresh_token")
+    if new_refresh:
+        auth = _load_auth()
+        auth["refresh_token"] = new_refresh
+        auth.setdefault("client_id", client_id)
+        auth.setdefault("client_secret", client_secret)
+        _save_auth(auth)
     return str(token)
+
+
+def save_client_credentials(client_id: str, client_secret: str) -> str:
+    client_id = (client_id or "").strip()
+    client_secret = (client_secret or "").strip()
+    if not client_id or not client_secret:
+        return "Нужны client_id и client_secret из developer.spotify.com."
+    auth = _load_auth()
+    auth["client_id"] = client_id
+    auth["client_secret"] = client_secret
+    _save_auth(auth)
+    return "Ключи Spotify сохранены. Скажите «войти в спотифай» для OAuth."
+
+
+def start_oauth_login(*, timeout: float = 120.0) -> str:
+    """Open Spotify authorize page and capture refresh token via localhost."""
+    client_id, client_secret, _refresh = _creds()
+    if not client_id or not client_secret:
+        return (
+            "Сначала сохраните ключи: в Spotify Dashboard создайте приложение, "
+            f"redirect URI = {_REDIRECT_URI}, затем "
+            "«сохрани спотифай ключи <id> <secret>» или задайте переменные окружения."
+        )
+
+    auth_url = "https://accounts.spotify.com/authorize?" + urllib.parse.urlencode(
+        {
+            "client_id": client_id,
+            "response_type": "code",
+            "redirect_uri": _REDIRECT_URI,
+            "scope": _SCOPES,
+            "show_dialog": "true",
+        }
+    )
+    result: dict[str, str] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path != "/callback":
+                self.send_response(404)
+                self.end_headers()
+                return
+            qs = parse_qs(parsed.query)
+            if qs.get("code"):
+                result["code"] = qs["code"][0]
+                body = b"<html><body><h2>JARVIS: Spotify connected. You can close this tab.</h2></body></html>"
+            else:
+                result["error"] = (qs.get("error") or ["unknown"])[0]
+                body = b"<html><body><h2>Authorization failed.</h2></body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):  # noqa: ANN002
+            return
+
+    try:
+        server = HTTPServer(("127.0.0.1", _REDIRECT_PORT), Handler)
+    except OSError:
+        return f"Порт {_REDIRECT_PORT} занят — закройте другое окно OAuth и повторите."
+
+    server.timeout = 1.0
+    _open_uri(auth_url)
+    deadline = time.time() + timeout
+    while time.time() < deadline and "code" not in result and "error" not in result:
+        server.handle_request()
+    try:
+        server.server_close()
+    except Exception:
+        pass
+
+    if result.get("error"):
+        return f"Spotify OAuth отклонён: {result['error']}."
+    code = result.get("code")
+    if not code:
+        return "Не дождался подтверждения в браузере. Повторите «войти в спотифай»."
+
+    data = urllib.parse.urlencode(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": _REDIRECT_URI,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+    ).encode()
+    req = urllib.request.Request(
+        "https://accounts.spotify.com/api/token",
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
+        return "Не удалось обменять код Spotify на токен."
+
+    refresh = payload.get("refresh_token")
+    access = payload.get("access_token")
+    if not refresh or not access:
+        return "Spotify не вернул refresh token. Проверьте scopes приложения."
+    auth = _load_auth()
+    auth.update(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh,
+            "connected_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+    )
+    _save_auth(auth)
+    _TOKEN_CACHE["access"] = access
+    _TOKEN_CACHE["expires"] = time.time() + float(payload.get("expires_in", 3600))
+    return "Spotify подключён. Можно включать треки, плейлисты и очередь голосом."
+
+
+def oauth_status() -> str:
+    if _api_configured():
+        auth = _load_auth()
+        when = auth.get("connected_at") or "через переменные окружения"
+        return f"Spotify API готов ({when})."
+    return (
+        "Spotify API не настроен. Скажите «настрой спотифай» после создания приложения "
+        f"с redirect URI {_REDIRECT_URI}."
+    )
+
+
+def queue_song(query: str) -> str:
+    q = (query or "").strip()
+    if not q:
+        return "Что добавить в очередь?"
+    track = search_track(q) if _api_configured() else None
+    if track and track.get("uri"):
+        result = _api_request(
+            "POST",
+            "https://api.spotify.com/v1/me/player/queue?"
+            + urllib.parse.urlencode({"uri": track["uri"]}),
+        )
+        if result is not None:
+            return f"Добавил в очередь: {_track_label(track)}."
+    return play_song(q)
+
+
+def play_playlist_api(name: str) -> str:
+    q = (name or "").strip()
+    if not q:
+        return open_spotify()
+    if _api_configured():
+        url = "https://api.spotify.com/v1/search?" + urllib.parse.urlencode(
+            {"q": q, "type": "playlist", "limit": 1}
+        )
+        payload = _api_request("GET", url)
+        if isinstance(payload, dict):
+            items = (((payload.get("playlists") or {}).get("items")) or [])
+            if items:
+                pl = items[0]
+                uri = pl.get("uri")
+                label = pl.get("name") or q
+                if uri:
+                    result = _api_request(
+                        "PUT",
+                        "https://api.spotify.com/v1/me/player/play",
+                        {"context_uri": uri},
+                    )
+                    if result is not None:
+                        return f"Включаю плейлист «{label}»."
+                    if _open_uri(str(uri)):
+                        return f"Открываю плейлист «{label}»."
+    return open_playlist(q)
 
 
 def _api_request(method: str, url: str, body: dict | None = None) -> dict | list | None:

@@ -17,7 +17,10 @@ import threading
 
 from jarvis import config
 from jarvis import context
+from jarvis import hotkeys
 from jarvis import memory
+from jarvis import plugins
+from jarvis import proactive
 from jarvis import reminders
 from jarvis.commands import parse_and_run
 from jarvis import speak as speak_mod
@@ -28,6 +31,7 @@ def speak(text: str, *, block: bool = True) -> None:
 
 
 reminders.set_speaker(lambda text: speak(text, block=False))
+proactive.set_speaker(lambda text: speak(text, block=False))
 
 
 def _banner() -> None:
@@ -68,6 +72,15 @@ def run_text_loop(on_status, stop_event: threading.Event | None = None) -> None:
             break
 
 
+def _handle_command(command: str, on_status) -> bool:
+    """Run one command; return True if the loop should exit."""
+    on_status(f"Команда: {command}")
+    result = parse_and_run(command)
+    on_status(result.spoken)
+    speak(result.spoken)
+    return result.detail == "__EXIT__"
+
+
 def run_voice_loop(on_status, stop_event: threading.Event | None = None) -> None:
     from jarvis.listen import Listener
 
@@ -81,26 +94,51 @@ def run_voice_loop(on_status, stop_event: threading.Event | None = None) -> None
         return
 
     speak(random.choice(config.GREETINGS))
-    on_status("Скажите «Джарвис» и команду.")
+    on_status("Скажите «Джарвис» и команду. Или Ctrl+Alt+J (push-to-talk).")
 
-    while not (stop_event and stop_event.is_set()):
+    ptt_busy = threading.Lock()
+
+    def on_ptt() -> None:
+        if not ptt_busy.acquire(blocking=False):
+            return
         try:
-            command = listener.listen_for_wake_then_command()
-        except KeyboardInterrupt:
-            break
-        if stop_event and stop_event.is_set():
-            break
-        if not command:
-            speak(random.choice(config.NOT_UNDERSTOOD), block=False)
-            continue
-        on_status(f"Команда: {command}")
-        result = parse_and_run(command)
-        on_status(result.spoken)
-        speak(result.spoken)
-        if result.detail == "__EXIT__":
-            if stop_event:
-                stop_event.set()
-            break
+            on_status("Push-to-talk: говорите команду…")
+            uttered = listener.listen_once(phrase_time_limit=config.COMMAND_LISTEN_SECONDS)
+            if not uttered:
+                speak(random.choice(config.NOT_UNDERSTOOD), block=False)
+                return
+            from jarvis.listen import contains_wake_word, strip_wake_word, _normalize
+
+            command = strip_wake_word(uttered) if contains_wake_word(uttered) else _normalize(uttered)
+            if command and _handle_command(command, on_status):
+                if stop_event:
+                    stop_event.set()
+        finally:
+            ptt_busy.release()
+
+    ptt = hotkeys.PushToTalk(on_ptt)
+    if ptt.start():
+        on_status(hotkeys.describe_default())
+    elif ptt.error:
+        on_status(ptt.error)
+
+    try:
+        while not (stop_event and stop_event.is_set()):
+            try:
+                command = listener.listen_for_wake_then_command()
+            except KeyboardInterrupt:
+                break
+            if stop_event and stop_event.is_set():
+                break
+            if not command:
+                speak(random.choice(config.NOT_UNDERSTOOD), block=False)
+                continue
+            if _handle_command(command, on_status):
+                if stop_event:
+                    stop_event.set()
+                break
+    finally:
+        ptt.stop()
 
 
 def run_background() -> int:
@@ -241,6 +279,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.no_speak:
         speak_mod.speak = lambda text, block=True: print(f"JARVIS: {text}")  # type: ignore[assignment]
+
+    # Boot helpers: cached app paths, plugins, proactive nudges.
+    try:
+        from jarvis import paths as paths_mod
+
+        paths_mod.ensure_detected()
+    except Exception:
+        pass
+    try:
+        plugins.reload()
+    except Exception:
+        pass
+    try:
+        proactive.start()
+    except Exception:
+        pass
 
     if args.background:
         return run_background()

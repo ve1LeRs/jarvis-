@@ -181,7 +181,7 @@ def complete_todo(query: str) -> str:
 
 
 def today_brief() -> str:
-    """Short daily briefing from todos + reminders-like notes."""
+    """Short daily briefing from todos + notes + calendar."""
     with _lock:
         todos = _read_json(TODOS_FILE, [])
         notes = _read_json(NOTES_FILE, [])
@@ -205,4 +205,13 @@ def today_brief() -> str:
         parts.append("Открытых дел нет.")
     if recent_notes:
         parts.append("Недавние заметки: " + "; ".join(recent_notes) + ".")
+    try:
+        from jarvis.actions import calendar as cal
+
+        cal_text = cal.today_events_text()
+        low = cal_text.lower()
+        if "не подключ" not in low:
+            parts.append(cal_text)
+    except Exception:
+        pass
     return " ".join(parts)

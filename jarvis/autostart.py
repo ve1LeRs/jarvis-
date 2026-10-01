@@ -186,6 +186,16 @@ def install_as_app(*, with_autostart: bool = True) -> str:
     ]
     if with_autostart:
         lines.append(enable_autostart())
+    try:
+        from jarvis import paths as paths_mod
+        from jarvis import plugins
+
+        found = paths_mod.detect_all()
+        lines.append(f"Автопоиск программ: найдено {len(found)}.")
+        plugins.ensure_dir()
+        lines.append(f"Папка плагинов: {plugins.PLUGINS_DIR}")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"Профиль ПК: пропуск ({exc}).")
     lines.append(
         "Готово: JARVIS установлен как программа — ярлык на рабочем столе, "
         "пункт в меню Пуск"
