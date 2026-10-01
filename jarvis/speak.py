@@ -119,6 +119,15 @@ def speak(text: str, *, block: bool = True) -> None:
     if not text:
         return
 
+    try:
+        from jarvis import memory
+
+        if memory.is_muted():
+            print(f"JARVIS: {text}")
+            return
+    except Exception:
+        pass
+
     def _run() -> None:
         with _speak_lock:
             try:

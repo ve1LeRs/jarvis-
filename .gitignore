@@ -8,3 +8,7 @@ __pycache__/
 *.wav
 .DS_Store
 Thumbs.db
+build/
+dist/
+*.spec.bak
+smoke_test.py

@@ -2,6 +2,7 @@
 
 Запуск:
   python -m jarvis                 # голос + HUD
+  python -m jarvis --overlay       # компактный оверлей
   python -m jarvis --background    # фон / автозапуск (трей, без консоли)
   python -m jarvis --text          # текстовый режим
   python -m jarvis --no-ui         # голос без окна
@@ -14,13 +15,35 @@ import random
 import sys
 import threading
 
+from jarvis import bridge
 from jarvis import config
+from jarvis import context
+from jarvis import hotkeys
+from jarvis import memory
+from jarvis import plugins
+from jarvis import proactive
+from jarvis import reminders
 from jarvis.commands import parse_and_run
 from jarvis import speak as speak_mod
 
 
 def speak(text: str, *, block: bool = True) -> None:
-    speak_mod.speak(text, block=block)
+    speak_mod.speak(context.adapt_speech(text), block=block)
+
+
+reminders.set_speaker(lambda text: speak(text, block=False))
+proactive.set_speaker(lambda text: speak(text, block=False))
+
+
+def _bridge_handle(command: str) -> str:
+    result = parse_and_run(command)
+    # Optionally speak replies that arrived from the phone
+    if result.spoken:
+        speak(result.spoken, block=False)
+    return result.spoken
+
+
+bridge.set_command_handler(_bridge_handle)
 
 
 def _banner() -> None:
@@ -61,6 +84,15 @@ def run_text_loop(on_status, stop_event: threading.Event | None = None) -> None:
             break
 
 
+def _handle_command(command: str, on_status) -> bool:
+    """Run one command; return True if the loop should exit."""
+    on_status(f"Команда: {command}")
+    result = parse_and_run(command)
+    on_status(result.spoken)
+    speak(result.spoken)
+    return result.detail == "__EXIT__"
+
+
 def run_voice_loop(on_status, stop_event: threading.Event | None = None) -> None:
     from jarvis.listen import Listener
 
@@ -74,26 +106,51 @@ def run_voice_loop(on_status, stop_event: threading.Event | None = None) -> None
         return
 
     speak(random.choice(config.GREETINGS))
-    on_status("Скажите «Джарвис» и команду.")
+    on_status("Скажите «Джарвис» и команду. Или Ctrl+Alt+J (push-to-talk).")
 
-    while not (stop_event and stop_event.is_set()):
+    ptt_busy = threading.Lock()
+
+    def on_ptt() -> None:
+        if not ptt_busy.acquire(blocking=False):
+            return
         try:
-            command = listener.listen_for_wake_then_command()
-        except KeyboardInterrupt:
-            break
-        if stop_event and stop_event.is_set():
-            break
-        if not command:
-            speak(random.choice(config.NOT_UNDERSTOOD), block=False)
-            continue
-        on_status(f"Команда: {command}")
-        result = parse_and_run(command)
-        on_status(result.spoken)
-        speak(result.spoken)
-        if result.detail == "__EXIT__":
-            if stop_event:
-                stop_event.set()
-            break
+            on_status("Push-to-talk: говорите команду…")
+            uttered = listener.listen_once(phrase_time_limit=config.COMMAND_LISTEN_SECONDS)
+            if not uttered:
+                speak(random.choice(config.NOT_UNDERSTOOD), block=False)
+                return
+            from jarvis.listen import contains_wake_word, strip_wake_word, _normalize
+
+            command = strip_wake_word(uttered) if contains_wake_word(uttered) else _normalize(uttered)
+            if command and _handle_command(command, on_status):
+                if stop_event:
+                    stop_event.set()
+        finally:
+            ptt_busy.release()
+
+    ptt = hotkeys.PushToTalk(on_ptt)
+    if ptt.start():
+        on_status(hotkeys.describe_default())
+    elif ptt.error:
+        on_status(ptt.error)
+
+    try:
+        while not (stop_event and stop_event.is_set()):
+            try:
+                command = listener.listen_for_wake_then_command()
+            except KeyboardInterrupt:
+                break
+            if stop_event and stop_event.is_set():
+                break
+            if not command:
+                speak(random.choice(config.NOT_UNDERSTOOD), block=False)
+                continue
+            if _handle_command(command, on_status):
+                if stop_event:
+                    stop_event.set()
+                break
+    finally:
+        ptt.stop()
 
 
 def run_background() -> int:
@@ -147,10 +204,15 @@ def run_background() -> int:
         if hud_holder.get("hud") is None:
             threading.Thread(target=_ui, daemon=True).start()
 
+    def on_mute_toggle() -> None:
+        memory.set_muted(not memory.is_muted())
+        state = "выключен" if memory.is_muted() else "включён"
+        on_status(f"Голос {state}.")
+
     try:
         from jarvis.ui.tray import run_tray
 
-        run_tray(on_show=on_show, on_quit=on_quit)
+        run_tray(on_show=on_show, on_quit=on_quit, on_mute_toggle=on_mute_toggle)
     except Exception as exc:  # noqa: BLE001
         on_status(f"Трей недоступен ({exc}). Работаю без иконки — закройте процесс вручную.")
         try:
@@ -164,6 +226,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="J.A.R.V.I.S. voice assistant")
     parser.add_argument("--text", action="store_true", help="Text input instead of microphone")
     parser.add_argument("--no-ui", action="store_true", help="Disable HUD window")
+    parser.add_argument(
+        "--overlay",
+        action="store_true",
+        help="Compact always-on-top overlay instead of full HUD",
+    )
     parser.add_argument("--no-speak", action="store_true", help="Disable TTS (print only)")
     parser.add_argument(
         "--background",
@@ -200,7 +267,29 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Do not check for updates (same as JARVIS_NO_UPDATE=1)",
     )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="git pull latest code + refresh pip deps, then exit",
+    )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Shortcut: text mode without UI/TTS (same as --text --no-ui --no-speak)",
+    )
     args = parser.parse_args(argv)
+
+    if args.update:
+        from jarvis import updater
+
+        print(updater.update_from_git())
+        return 0
+
+    if args.dev:
+        args.text = True
+        args.no_ui = True
+        args.no_speak = True
+        args.no_update = True
 
     if (
         args.install_autostart
@@ -235,6 +324,26 @@ def main(argv: list[str] | None = None) -> int:
 
         updater.start_background_updates()
 
+    # Boot helpers: cached app paths, plugins, proactive nudges.
+    try:
+        from jarvis import paths as paths_mod
+
+        paths_mod.ensure_detected()
+    except Exception:
+        pass
+    try:
+        plugins.reload()
+    except Exception:
+        pass
+    try:
+        proactive.start()
+    except Exception:
+        pass
+    try:
+        bridge.autostart_if_configured()
+    except Exception:
+        pass
+
     if args.background:
         return run_background()
 
@@ -248,13 +357,18 @@ def main(argv: list[str] | None = None) -> int:
             run_voice_loop(on_status)
         return 0
 
-    from jarvis.ui.hud import JarvisHUD
+    if args.overlay:
+        from jarvis.ui.overlay import JarvisOverlay
 
-    hud = JarvisHUD()
+        ui = JarvisOverlay()
+    else:
+        from jarvis.ui.hud import JarvisHUD
+
+        ui = JarvisHUD()
 
     def on_status(msg: str) -> None:
         print(msg)
-        hud.set_status(msg)
+        ui.set_status(msg)
 
     worker = threading.Thread(
         target=run_text_loop if args.text else run_voice_loop,
@@ -263,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     worker.start()
     try:
-        hud.run()
+        ui.run()
     except KeyboardInterrupt:
         pass
     return 0

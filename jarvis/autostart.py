@@ -172,6 +172,14 @@ def create_start_menu_shortcuts() -> str:
     if uninstall.exists():
         _create_shortcut(menu / "Удалить JARVIS.lnk", uninstall, "", root, "Удалить JARVIS")
 
+    update = root / "update.bat"
+    if update.exists():
+        _create_shortcut(menu / "Обновить JARVIS.lnk", update, "", root, "Обновить JARVIS (git pull)")
+
+    dev = root / "dev.bat"
+    if dev.exists():
+        _create_shortcut(menu / "JARVIS — тест (dev).lnk", dev, "", root, "Быстрый текстовый тест")
+
     return f"Ярлыки в меню Пуск: {menu}"
 
 
@@ -186,6 +194,16 @@ def install_as_app(*, with_autostart: bool = True) -> str:
     ]
     if with_autostart:
         lines.append(enable_autostart())
+    try:
+        from jarvis import paths as paths_mod
+        from jarvis import plugins
+
+        found = paths_mod.detect_all()
+        lines.append(f"Автопоиск программ: найдено {len(found)}.")
+        plugins.ensure_dir()
+        lines.append(f"Папка плагинов: {plugins.PLUGINS_DIR}")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"Профиль ПК: пропуск ({exc}).")
     lines.append(
         "Готово: JARVIS установлен как программа — ярлык на рабочем столе, "
         "пункт в меню Пуск"
