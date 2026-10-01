@@ -71,6 +71,52 @@ def open_chrome(url: str | None = None) -> str:
     return "Chrome не найден — открываю браузер по умолчанию."
 
 
+def _find_steam() -> str | None:
+    """Typical Steam install locations on Windows / other OS."""
+    if SYSTEM == "Windows":
+        candidates = [
+            # Most common default install
+            r"C:\Program Files (x86)\Steam\steam.exe",
+            os.path.expandvars(r"%ProgramFiles(x86)%\Steam\steam.exe"),
+            os.path.expandvars(r"%ProgramFiles%\Steam\steam.exe"),
+            os.path.expandvars(r"%LocalAppData%\Programs\Steam\steam.exe"),
+            os.path.expanduser(r"~\Steam\steam.exe"),
+        ]
+        for path in candidates:
+            if path and os.path.isfile(path):
+                return path
+        return None
+    if SYSTEM == "Darwin":
+        path = "/Applications/Steam.app"
+        if os.path.isdir(path) or os.path.exists(path):
+            return path
+    else:
+        for name in ("steam", "steam-runtime"):
+            found = shutil.which(name)
+            if found:
+                return found
+    return None
+
+
+def open_steam() -> str:
+    steam = _find_steam()
+    if steam:
+        if SYSTEM == "Darwin" and steam.endswith(".app"):
+            _run(["open", steam])
+        else:
+            _run([steam])
+        return "Открываю Steam."
+    if SYSTEM == "Windows":
+        # Last resort: protocol handler / PATH
+        try:
+            os.startfile("steam:")  # type: ignore[attr-defined]
+            return "Открываю Steam."
+        except Exception:
+            _run(["cmd", "/c", "start", "", "steam:"])
+            return "Пытаюсь открыть Steam."
+    return "Steam не найден. Обычный путь: C:\\Program Files (x86)\\Steam\\steam.exe"
+
+
 def open_explorer(path: str | None = None) -> str:
     target = path or os.path.expanduser("~")
     if SYSTEM == "Windows":
@@ -116,6 +162,9 @@ def open_app(name: str) -> str:
         "хром": lambda: open_chrome(),
         "chrome": lambda: open_chrome(),
         "браузер": lambda: open_chrome(),
+        "steam": lambda: open_steam(),
+        "стим": lambda: open_steam(),
+        "стиме": lambda: open_steam(),
         "youtube": lambda: open_url("https://www.youtube.com"),
         "ютуб": lambda: open_url("https://www.youtube.com"),
         "ютубе": lambda: open_url("https://www.youtube.com"),

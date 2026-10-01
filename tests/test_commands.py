@@ -71,6 +71,18 @@ class CommandTests(unittest.TestCase):
         result = parse_and_run("открой ютуб")
         self.assertTrue(result.ok)
 
+    @mock.patch("jarvis.actions.system.open_steam", return_value="steam")
+    def test_steam(self, mocked) -> None:
+        result = parse_and_run("открой стим")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once()
+
+    @mock.patch("jarvis.actions.system.open_steam", return_value="steam")
+    def test_steam_english(self, mocked) -> None:
+        result = parse_and_run("открой steam")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once()
+
     def test_time(self) -> None:
         result = parse_and_run("который час")
         self.assertTrue(result.ok)
@@ -137,6 +149,16 @@ class ListenFlowTests(unittest.TestCase):
         listener.listen_once = fake_listen_once  # type: ignore[method-assign]
         cmd = listener.listen_for_wake_then_command()
         self.assertEqual(cmd, "открой ютуб")
+
+
+class SteamPathTests(unittest.TestCase):
+    @mock.patch("jarvis.actions.system.SYSTEM", "Windows")
+    def test_prefers_program_files_x86(self) -> None:
+        from jarvis.actions import system as act
+
+        wanted = r"C:\Program Files (x86)\Steam\steam.exe"
+        with mock.patch("os.path.isfile", side_effect=lambda p: p == wanted):
+            self.assertEqual(act._find_steam(), wanted)
 
 
 class VoicePickerTests(unittest.TestCase):

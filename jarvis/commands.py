@@ -151,6 +151,9 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
             "хром",
             "chrome",
             "браузер",
+            "steam",
+            "стим",
+            "стиме",
         }
         first = payload.split()[0] if payload else ""
         if payload in known_sites or first in known_sites:
