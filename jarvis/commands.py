@@ -11,6 +11,7 @@ from jarvis import config
 from jarvis import memory
 from jarvis import reminders
 from jarvis.actions import fun as fun_act
+from jarvis.actions import spotify as spotify_act
 from jarvis.actions import system as act
 
 
@@ -68,6 +69,50 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(?:статус|состояние|system\s+status)$"), "status"),
     (re.compile(r"^(?:молчи|тихий\s+режим|выключи\s+голос|mute\s+voice)$"), "mute_on"),
     (re.compile(r"^(?:говори|включи\s+голос|unmute)$"), "mute_off"),
+    # Spotify (before generic open / media)
+    (
+        re.compile(
+            r"^(?:включи|поставь|поиграй|запусти|play)\s+(.+?)\s+"
+            r"(?:в\s+)?(?:спотифай|spotify|спотифае)$"
+        ),
+        "spotify_play",
+    ),
+    (
+        re.compile(
+            r"^(?:в\s+)?(?:спотифай|spotify)\s+(?:включи|поставь|поиграй|найди|play)?\s*(.+)$"
+        ),
+        "spotify_play",
+    ),
+    (
+        re.compile(
+            r"^(?:включи|поставь|поиграй)\s+(?:песню|трек|музыку)\s+(.+)$"
+        ),
+        "spotify_play",
+    ),
+    (
+        re.compile(
+            r"^(?:из\s+медиатеки|в\s+медиатеке|из\s+любимых)\s+(.+)$"
+        ),
+        "spotify_library",
+    ),
+    (
+        re.compile(
+            r"^(?:включи|поставь|поиграй)\s+(.+?)\s+(?:из\s+медиатеки|из\s+любимых)$"
+        ),
+        "spotify_library",
+    ),
+    (
+        re.compile(
+            r"^(?:открой|открыть|запусти)\s+(?:спотифай|spotify)$"
+        ),
+        "spotify_open",
+    ),
+    (
+        re.compile(
+            r"^(?:открой|открыть)\s+(?:медиатеку|любимые(?:\s+треки)?|liked\s+songs)$"
+        ),
+        "spotify_liked",
+    ),
     # Open explorer folders
     (re.compile(r"^(?:открой|открыть|запусти|запустить)\s+(?:проводник|explorer|файловый\s+менеджер|файлы)$"), "explorer"),
     (re.compile(r"^(?:открой|открыть)\s+(?:папку\s+)?загрузки$"), "downloads"),
@@ -257,6 +302,18 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
         memory.set_muted(False)
         return _ok("Голос снова включён.")
 
+    if action == "spotify_open":
+        return _ok(spotify_act.open_spotify())
+
+    if action == "spotify_liked":
+        return _ok(spotify_act.open_liked_songs())
+
+    if action == "spotify_play":
+        return _ok(spotify_act.play_song(payload))
+
+    if action == "spotify_library":
+        return _ok(spotify_act.play_from_library(payload))
+
     if action == "explorer":
         return _ok(f"{random.choice(config.ACKNOWLEDGMENTS)} Открываю проводник.", act.open_explorer())
 
@@ -361,11 +418,12 @@ def _dispatch(action: str, payload: str, raw: str) -> Result:
 
     if action == "help":
         help_text = (
-            "Я умею искать в Google и YouTube, открывать приложения и папки, "
-            "говорить время и дату, управлять громкостью и музыкой, "
-            "делать скриншоты, считать, шутить, вести заметки и напоминания, "
-            "смотреть погоду, блокировать, усыплять и перезагружать компьютер. "
-            "Пример: джарвис, через 10 минут напомни про чай."
+            "Я умею искать в Google и YouTube, включать песни в Spotify, "
+            "открывать приложения и папки, говорить время и дату, "
+            "управлять громкостью, делать скриншоты, считать, шутить, "
+            "вести заметки и напоминания, смотреть погоду, "
+            "блокировать и перезагружать компьютер. "
+            "Пример: джарвис, включи Bohemian Rhapsody в спотифай."
         )
         return _ok(help_text)
 

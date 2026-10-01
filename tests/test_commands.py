@@ -149,6 +149,36 @@ class CommandTests(unittest.TestCase):
     def test_safe_calc_rejects_code(self) -> None:
         self.assertIn("Не смог", fun_act.calculate("__import__('os').system('id')"))
 
+    @mock.patch("jarvis.actions.spotify.play_song", return_value="Включаю в Spotify: Test.")
+    def test_spotify_play(self, mocked) -> None:
+        result = parse_and_run("включи bohemian rhapsody в спотифай")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once_with("bohemian rhapsody")
+
+    @mock.patch("jarvis.actions.spotify.play_song", return_value="ok")
+    def test_spotify_short(self, mocked) -> None:
+        result = parse_and_run("спотифай lofti")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once_with("lofti")
+
+    @mock.patch("jarvis.actions.spotify.play_from_library", return_value="lib")
+    def test_spotify_library(self, mocked) -> None:
+        result = parse_and_run("включи shape of you из медиатеки")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once_with("shape of you")
+
+    @mock.patch("jarvis.actions.spotify.open_spotify", return_value="Открываю Spotify.")
+    def test_spotify_open(self, mocked) -> None:
+        result = parse_and_run("открой спотифай")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once()
+
+    @mock.patch("jarvis.actions.spotify.open_liked_songs", return_value="liked")
+    def test_spotify_liked(self, mocked) -> None:
+        result = parse_and_run("открой медиатеку")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

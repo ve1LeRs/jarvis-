@@ -125,6 +125,7 @@ def open_app(name: str) -> str:
         "word": "winword",
         "excel": "excel",
         "spotify": "spotify",
+        "спотифай": "spotify",
         "telegram": "telegram",
         "discord": "discord",
         "vscode": "code",
@@ -152,6 +153,11 @@ def open_app(name: str) -> str:
 
     if key in apps_cross:
         return apps_cross[key]()
+
+    if key in {"spotify", "спотифай"}:
+        from jarvis.actions import spotify as spotify_act
+
+        return spotify_act.open_spotify()
 
     if SYSTEM == "Windows":
         exe = apps_win.get(key)
