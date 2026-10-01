@@ -74,7 +74,7 @@ def run_voice_loop(on_status, stop_event: threading.Event | None = None) -> None
         return
 
     speak(random.choice(config.GREETINGS))
-    on_status("Скажите «Джарвис» и команду.")
+    on_status("Скажите «Джарвис», затем команду до конца фразы.")
 
     while not (stop_event and stop_event.is_set()):
         try:
@@ -84,12 +84,15 @@ def run_voice_loop(on_status, stop_event: threading.Event | None = None) -> None
         if stop_event and stop_event.is_set():
             break
         if not command:
-            speak(random.choice(config.NOT_UNDERSTOOD), block=False)
+            # Wake was heard but the sentence was empty / not recognized.
+            speak("Повторите команду после «Джарвис».", block=False)
             continue
         on_status(f"Команда: {command}")
         result = parse_and_run(command)
         on_status(result.spoken)
-        speak(result.spoken)
+        # block=True so TTS finishes before we open the mic again
+        # (avoids hearing ourselves / cutting the next command).
+        speak(result.spoken, block=True)
         if result.detail == "__EXIT__":
             if stop_event:
                 stop_event.set()

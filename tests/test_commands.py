@@ -6,16 +6,33 @@ import unittest
 from unittest import mock
 
 from jarvis.commands import parse_and_run
-from jarvis.listen import contains_wake_word, strip_wake_word
+from jarvis.listen import contains_wake_word, looks_like_command, strip_wake_word
 
 
 class WakeWordTests(unittest.TestCase):
     def test_wake_detected(self) -> None:
         self.assertTrue(contains_wake_word("Джарвис, открой проводник"))
         self.assertTrue(contains_wake_word("jarvis open chrome"))
+        self.assertTrue(contains_wake_word("эй джарвис который час"))
+
+    def test_wake_not_substring(self) -> None:
+        self.assertFalse(contains_wake_word("открой проводник"))
+        self.assertFalse(contains_wake_word("просто разговор без активации"))
 
     def test_strip(self) -> None:
         self.assertEqual(strip_wake_word("джарвис открой проводник"), "открой проводник")
+        self.assertEqual(strip_wake_word("джарвис"), "")
+        self.assertEqual(
+            strip_wake_word("эй джарвис найди информацию о брусе"),
+            "найди информацию о брусе",
+        )
+
+    def test_looks_like_command(self) -> None:
+        self.assertTrue(looks_like_command("открой проводник"))
+        self.assertTrue(looks_like_command("найди информацию о сосновом брусе"))
+        self.assertFalse(looks_like_command(""))
+        self.assertFalse(looks_like_command("ну"))
+        self.assertFalse(looks_like_command("пожалуйста"))
 
 
 class CommandTests(unittest.TestCase):
@@ -28,6 +45,18 @@ class CommandTests(unittest.TestCase):
     @mock.patch("jarvis.actions.system.open_explorer", return_value="explorer")
     def test_explorer(self, mocked) -> None:
         result = parse_and_run("открой проводник")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once()
+
+    @mock.patch("jarvis.actions.system.open_explorer", return_value="explorer")
+    def test_explorer_with_please(self, mocked) -> None:
+        result = parse_and_run("открой проводник пожалуйста")
+        self.assertTrue(result.ok)
+        mocked.assert_called_once()
+
+    @mock.patch("jarvis.actions.system.open_explorer", return_value="explorer")
+    def test_explorer_with_wake_leftover(self, mocked) -> None:
+        result = parse_and_run("джарвис открой проводник")
         self.assertTrue(result.ok)
         mocked.assert_called_once()
 
@@ -60,6 +89,54 @@ class CommandTests(unittest.TestCase):
     def test_unknown(self) -> None:
         result = parse_and_run("блаблабла xyz")
         self.assertFalse(result.ok)
+
+
+class ListenFlowTests(unittest.TestCase):
+    def test_full_sentence_after_wake_in_one_utterance(self) -> None:
+        from jarvis.listen import Listener
+
+        listener = Listener(on_status=lambda _s: None)
+        calls = {"n": 0}
+
+        def fake_listen_once(**_kwargs):
+            calls["n"] += 1
+            return "Джарвис, открой проводник"
+
+        listener.listen_once = fake_listen_once  # type: ignore[method-assign]
+        cmd = listener.listen_for_wake_then_command()
+        self.assertEqual(cmd, "открой проводник")
+        self.assertEqual(calls["n"], 1)
+
+    def test_ignores_speech_without_wake(self) -> None:
+        from jarvis.listen import Listener
+
+        listener = Listener(on_status=lambda _s: None)
+        sequence = iter(
+            [
+                "просто фоновый разговор",
+                "Джарвис который час",
+            ]
+        )
+
+        def fake_listen_once(**_kwargs):
+            return next(sequence)
+
+        listener.listen_once = fake_listen_once  # type: ignore[method-assign]
+        cmd = listener.listen_for_wake_then_command()
+        self.assertEqual(cmd, "который час")
+
+    def test_wake_alone_then_command(self) -> None:
+        from jarvis.listen import Listener
+
+        listener = Listener(on_status=lambda _s: None)
+        sequence = iter(["Джарвис", "открой ютуб"])
+
+        def fake_listen_once(**_kwargs):
+            return next(sequence)
+
+        listener.listen_once = fake_listen_once  # type: ignore[method-assign]
+        cmd = listener.listen_for_wake_then_command()
+        self.assertEqual(cmd, "открой ютуб")
 
 
 if __name__ == "__main__":

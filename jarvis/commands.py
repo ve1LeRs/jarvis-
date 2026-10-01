@@ -60,10 +60,38 @@ _RULES: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
-def parse_and_run(command: str) -> Result:
+_FILLERS = re.compile(
+    r"^(?:ну|а|пожалуйста|можешь|можете|прошу|давай)\s+",
+    re.UNICODE,
+)
+_TRAILING = re.compile(
+    r"\s+(?:пожалуйста|сэр|sir|сейчас|быстро)$",
+    re.UNICODE,
+)
+
+
+def _clean_command(command: str) -> str:
     text = (command or "").strip().lower().replace("ё", "е")
     text = re.sub(r"[^\w\s\-]+", " ", text, flags=re.UNICODE)
     text = re.sub(r"\s+", " ", text).strip()
+    # Drop leftover wake word if the listener passed it through.
+    for wake in ("джарвис", "jarvis", "джервис", "джарвиз"):
+        if text == wake:
+            return ""
+        if text.startswith(wake + " "):
+            text = text[len(wake) :].strip()
+    # Soften polite / filler words that break strict regex anchors.
+    changed = True
+    while changed and text:
+        cleaned = _FILLERS.sub("", text)
+        cleaned = _TRAILING.sub("", cleaned)
+        changed = cleaned != text
+        text = cleaned.strip()
+    return text
+
+
+def parse_and_run(command: str) -> Result:
+    text = _clean_command(command)
     if not text:
         return _fail()
 
