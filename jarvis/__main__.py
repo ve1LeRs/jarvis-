@@ -195,6 +195,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Remove desktop/Start Menu/autostart shortcuts",
     )
+    parser.add_argument(
+        "--no-update",
+        action="store_true",
+        help="Do not check for updates (same as JARVIS_NO_UPDATE=1)",
+    )
     args = parser.parse_args(argv)
 
     if (
@@ -224,6 +229,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.no_speak:
         speak_mod.speak = lambda text, block=True: print(f"JARVIS: {text}")  # type: ignore[assignment]
+
+    if not args.no_update:
+        from jarvis import updater
+
+        updater.start_background_updates()
 
     if args.background:
         return run_background()

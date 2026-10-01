@@ -4,11 +4,13 @@ on:
   push:
     branches: [main, master]
   workflow_dispatch:
-  release:
-    types: [created]
 
 permissions:
   contents: write
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   windows-exe:
@@ -28,6 +30,15 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Stamp build number
+        shell: pwsh
+        run: |
+          Set-Content -Path jarvis/version.py -Encoding utf8 -Value @(
+            '"""Build number. CI overwrites this file before building JARVIS.exe."""',
+            '',
+            "BUILD = ${{ github.run_number }}"
+          )
+
       - name: Build JARVIS.exe
         run: pyinstaller --noconfirm jarvis.spec
 
@@ -37,8 +48,13 @@ jobs:
           name: JARVIS-windows
           path: dist/JARVIS.exe
 
-      - name: Attach to release
-        if: github.event_name == 'release'
+      # The app's auto-updater reads releases/latest and expects tag "build-<N>".
+      - name: Publish release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: build-${{ github.run_number }}
+          name: JARVIS build ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
           files: dist/JARVIS.exe

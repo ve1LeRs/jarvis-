@@ -15,6 +15,8 @@ hiddenimports = [
     "jarvis.listen",
     "jarvis.speak",
     "jarvis.autostart",
+    "jarvis.updater",
+    "jarvis.version",
     "jarvis.actions",
     "jarvis.actions.system",
     "jarvis.ui",

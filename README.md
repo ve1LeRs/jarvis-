@@ -53,7 +53,15 @@ install_exe.bat
 
 Сначала это были исходники Python. Теперь `build_exe.bat` собирает один **`JARVIS.exe`**, а `install_exe.bat` регистрирует его в Windows как обычную программу.
 
-Сборка на GitHub Actions: при пуше в `main` workflow **Build JARVIS.exe** кладёт готовый файл в Artifacts (Actions → последний run → JARVIS-windows).
+Сборка на GitHub Actions: при пуше в `main` workflow **Build JARVIS.exe** публикует готовый файл в [Releases](https://github.com/ve1lers/jarvis-/releases/latest) с тегом `build-<номер>`.
+
+## Автообновление
+
+Скачать `JARVIS.exe` нужно **один раз**. Дальше программа сама проверяет обновления при запуске и каждые 6 часов: если в Releases появилась более новая сборка, она скачивается, подменяет `JARVIS.exe` и JARVIS перезапускается.
+
+Если JARVIS запущен из исходников (через Python), вместо этого выполняется `git pull --ff-only` и перезапуск.
+
+Отключить: запуск с `--no-update` или переменная окружения `JARVIS_NO_UPDATE=1`.
 
 ## Требования
 
